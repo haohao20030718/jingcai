@@ -1224,7 +1224,13 @@ var UI = (function () {
     out.matches = merged;
     out.deleted = del;
     out.settings = local.settings || remote.settings || {};
-    return { data: out, added: added, updated: updated, removed: removed, kept: kept };
+    // 料单也要合并！否则本地旧料单会把云端的新料单盖回去（表现为"已同步但内容没变"）
+    var tm = {};
+    (local.tips || []).forEach(function (t) { if (t && t.id) tm[t.id] = t; });
+    (remote.tips || []).forEach(function (t) { if (t && t.id) tm[t.id] = t; });   // 冲突时以云端为准
+    out.tips = Object.keys(tm).map(function (k) { return tm[k]; });
+    return { data: out, added: added, updated: updated, removed: removed, kept: kept,
+             tips: out.tips.length };
   }
 
   function syncNow(silent) {
