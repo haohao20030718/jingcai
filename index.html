@@ -1276,6 +1276,102 @@ var UI = (function () {
     if (b) b.onclick = function () { syncNow(false); };
   }
 
+  // ---------- Gitee 云同步（HTTPS，手机电脑都能连，不依赖同一 wifi） ----------
+  var GSYNC = { busy: false, last: null, msg: "未配置" };
+  function gconf() {
+    var s = D().settings || {};
+    return { owner: s.gOwner || "", repo: s.gRepo || "", token: s.gToken || "", path: "data.json" };
+  }
+  function b64decode(s) {
+    var bin = atob(String(s).replace(/\s/g, ""));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+  function b64encode(str) {
+    var bytes = new TextEncoder().encode(str), bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function gapi(method, path, form) {
+    var url = "https://gitee.com/api/v5" + path;
+    var opt = { method: method, cache: "no-store" };
+    if (form) {
+      var body = [];
+      Object.keys(form).forEach(function (k) {
+        body.push(encodeURIComponent(k) + "=" + encodeURIComponent(form[k]));
+      });
+      opt.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+      opt.body = body.join("&");
+    }
+    return fetch(url, opt).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (e) {}
+        return { status: r.status, ok: r.ok, data: j };
+      });
+    });
+  }
+  function syncGitee(silent) {
+    var c = gconf();
+    if (!c.token || !c.owner || !c.repo) {
+      GSYNC.msg = "还没填仓库和令牌";
+      renderGitee(); if (!silent) toast(GSYNC.msg);
+      return Promise.resolve();
+    }
+    if (GSYNC.busy) return Promise.resolve();
+    GSYNC.busy = true; GSYNC.msg = "同步中…"; renderGitee();
+    var base = "/repos/" + encodeURIComponent(c.owner) + "/" + encodeURIComponent(c.repo) + "/contents/" + c.path;
+    var q = "?access_token=" + encodeURIComponent(c.token) + "&ref=master&t=" + Date.now();
+    return gapi("GET", base + q)
+      .then(function (r) {
+        if (r.status === 404) return { remote: null, sha: null };
+        if (!r.ok || !r.data || !r.data.content) throw new Error("读取失败(" + r.status + ")");
+        var txt = b64decode(r.data.content);
+        return { remote: JSON.parse(txt), sha: r.data.sha };
+      })
+      .then(function (x) {
+        var local = Store.plain(D());
+        var res = null;
+        if (x.remote) {
+          res = mergeRemote(local, x.remote);
+          Store.data = Store.normalize(res.data);
+          Store.save(true);
+        }
+        var payload = Store.plain(D());
+        var form = { access_token: c.token, content: b64encode(JSON.stringify(payload)),
+                     message: "sync " + new Date().toISOString().slice(0, 19) };
+        if (x.sha) form.sha = x.sha;
+        return gapi(x.sha ? "PUT" : "POST", base, form).then(function (w) {
+          if (!w.ok) throw new Error("写入失败(" + w.status + ")");
+          GSYNC.last = new Date();
+          GSYNC.msg = res
+            ? ("已同步（新增 " + res.added + "、更新 " + res.updated + "、删除 " + res.removed + "）")
+            : "已上传本机数据（首次）";
+          GSYNC.busy = false;
+          renderGitee(); render();
+          if (!silent) toast(GSYNC.msg);
+        });
+      })
+      .catch(function (e) {
+        GSYNC.busy = false;
+        GSYNC.msg = "同步失败：" + e.message;
+        renderGitee();
+        if (!silent) toast(GSYNC.msg);
+      });
+  }
+  function renderGitee() {
+    var el = $("#gInfo");
+    if (!el) return;
+    var c = gconf();
+    el.innerHTML = '<div class="note" style="margin:2px 0 6px">' +
+      "仓库：<b>" + (c.owner ? esc(c.owner + "/" + c.repo) : "（未填）") + "</b>　" +
+      "令牌：" + (c.token ? "已保存" : "（未填）") +
+      "<br>状态：" + esc(GSYNC.msg) +
+      (GSYNC.last ? "<br>上次成功：" + GSYNC.last.toLocaleTimeString() : "") +
+      "</div>";
+  }
+
   // ---------- 数据访问 ----------
   function D() { return Store.data; }
   // 同一场次组内按开赛时间（HH:MM）排；没填时间的排在当天有时间的后面，最后用序号兜底
@@ -2488,16 +2584,19 @@ var UI = (function () {
     h.push('<div class="bar"><button class="btn" id="jOut">导出 JSON</button>' +
       '<button class="btn" id="jIn">导入 JSON</button><input type="file" id="jFile" accept=".json" style="display:none"></div>');
 
-    h.push('<div class="sec">多设备同步（电脑当同步端）</div>');
+    h.push('<div class="sec">云同步（Gitee 私有仓库）</div>');
     h.push('<div class="card" style="padding:12px">' +
-      '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">填电脑的地址，手机和电脑填同一个。' +
-      '在家填局域网地址；在外面就填隧道地址。填好后点「立即同步」。' +
-      '合并规则：同一条取较新的一次，删除也会同步。</div>' +
-      '<input type="text" id="dSync" placeholder="http://192.168.1.29:8848" value="' +
-      esc((D().settings || {}).syncUrl || "") + '">' +
-      '<div class="bar" style="margin-top:8px"><button class="btn primary" id="dSyncSave">保存地址</button>' +
-      '<button class="btn" id="dSyncGo">立即同步</button></div>' +
-      '<div id="syncInfo"></div></div>');
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">手机和电脑填同一套，就能互相同步，' +
+      '不依赖同一 wifi。规则：同一条取较新的一次，删除也会同步。</div>' +
+      '<div class="fg one"><div><label>仓库（用户名/仓库名）</label>' +
+      '<input type="text" id="gRepo" placeholder="haohao20030718/jingcai-data" value="' +
+      esc((D().settings || {}).gOwner ? (D().settings.gOwner + "/" + (D().settings.gRepo || "jingcai-data")) : "haohao20030718/jingcai-data") + '"></div></div>' +
+      '<div class="fg one"><div><label>私人令牌（只存在本机）</label>' +
+      '<input type="password" id="gToken" placeholder="粘贴 Gitee 私人令牌" value="' +
+      esc((D().settings || {}).gToken || "") + '"></div></div>' +
+      '<div class="bar" style="margin-top:8px"><button class="btn primary" id="gSave">保存并同步</button>' +
+      '<button class="btn" id="gGo">立即同步</button></div>' +
+      '<div id="gInfo"></div></div>');
     h.push('<div class="sec">批量校正</div>');
     h.push('<div class="list-tool">');
     h.push('<div class="row tap" id="tLeague"><div><div>按赛事批量设开赛时间</div>' +
@@ -2538,17 +2637,21 @@ var UI = (function () {
 
     $("#v-data").innerHTML = h.join("");
 
-    if ($("#dSyncSave")) {
-      $("#dSyncSave").onclick = function () {
+    if ($("#gSave")) {
+      $("#gSave").onclick = function () {
+        var v = ($("#gRepo").value || "").trim().replace(/^https?:\/\/gitee\.com\//, "").replace(/\/+$/, "");
+        var parts = v.split("/");
         D().settings = D().settings || {};
-        D().settings.syncUrl = ($("#dSync").value || "").trim().replace(/\/+$/, "");
+        D().settings.gOwner = parts[0] || "";
+        D().settings.gRepo = parts[1] || "jingcai-data";
+        D().settings.gToken = ($("#gToken").value || "").trim();
         Store.save(true);
-        SYNC.msg = "地址已保存";
-        renderSyncRow();
-        toast("同步地址已保存");
+        GSYNC.msg = "配置已保存，开始同步…";
+        renderGitee();
+        syncGitee(false);
       };
-      $("#dSyncGo").onclick = function () { syncNow(false); };
-      renderSyncRow();
+      $("#gGo").onclick = function () { syncGitee(false); };
+      renderGitee();
     }
 
     if ($("#dCopy")) {
