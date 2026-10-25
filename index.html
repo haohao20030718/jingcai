@@ -1387,23 +1387,28 @@ var UI = (function () {
   function ensureTips() {
     var d = D();
     if (!Array.isArray(d.tips)) d.tips = [];
-    // 从旧的「按场记料单」迁移：**严格照表格**——表格里每行写了金额就是一张独立料单，不自动合并同名
-    var legacy = d.matches.filter(function (m) { return (Number(m.tipCost) || 0) > 0 && !m.tipId; });
-    legacy.forEach(function (m) {
-      var nm = String(m.note || "");
-      var mm = /【([^】]+)】/.exec(nm);
-      var name = mm ? mm[1] : (nm ? nm.split(/[\/／]/)[0].slice(0, 12) : "料单");
-      var t = { id: "t" + Math.random().toString(36).slice(2, 8), name: name,
-                cost: Number(m.tipCost) || 0, note: "" };
-      d.tips.push(t);
-      m.tipId = t.id;
+    var byId = {};
+    d.tips.forEach(function (t) { byId[t.id] = t; });
+    var changed = false, used = {};
+    d.matches.forEach(function (m) {
+      var tc = Number(m.tipCost) || 0;
+      if (tc <= 0) { if (m.tipId) { delete m.tipId; changed = true; } return; }
+      // 料单 id 由比赛 id 派生：同一场比赛在手机和电脑上算出同一个 id，同步不会重复
+      var tid = "tip_" + (m.id || ("s" + m.seq));
+      used[tid] = 1;
+      if (!byId[tid]) {
+        var nm = String(m.note || "");
+        var mm = /【([^】]+)】/.exec(nm);
+        byId[tid] = { id: tid, name: mm ? mm[1] : "料单", cost: tc, note: "" };
+        d.tips.push(byId[tid]); changed = true;
+      }
+      if (m.tipId !== tid) { m.tipId = tid; changed = true; }
     });
-    // 兜底：引用了不存在的料单就当没有
-    var ids = {};
-    d.tips.forEach(function (t) { ids[t.id] = 1; });
-    d.matches.forEach(function (m) { if (m.tipId && !ids[m.tipId]) delete m.tipId; });
-    // 生成出来的料单要落盘，否则每次刷新都重新生成、数据页显示"还没有料单"
-    if (legacy.length) setTimeout(function () { try { Store.save(true); } catch (e) {} }, 0);
+    // 清掉没人引用的料单：之前重复累积就是这么产生的
+    var before = d.tips.length;
+    d.tips = d.tips.filter(function (t) { return used[t.id]; });
+    if (d.tips.length !== before) changed = true;
+    if (changed) setTimeout(function () { try { Store.save(true); } catch (e) {} }, 0);
   }
   function tipById(id) {
     var d = D();
