@@ -774,6 +774,7 @@ var Store = (function () {
       updatedAt: new Date().toISOString().slice(0, 19),
       settings: d.settings || {},
       deleted: d.deleted || {},
+      tips: d.tips || [],
       matches: [],
       costs: d.costs || []
     };
@@ -1372,6 +1373,87 @@ var UI = (function () {
       "</div>";
   }
 
+  // ---------- 料单（一张料单可挂多场比赛，成本只算一次） ----------
+  // 数据模型：data.tips = [{id, name, cost, note}]；match.tipId 指向其中一张
+  function ensureTips() {
+    var d = D();
+    if (!Array.isArray(d.tips)) d.tips = [];
+    // 从旧的「按场记料单」迁移：**严格照表格**——表格里每行写了金额就是一张独立料单，不自动合并同名
+    var legacy = d.matches.filter(function (m) { return (Number(m.tipCost) || 0) > 0 && !m.tipId; });
+    legacy.forEach(function (m) {
+      var nm = String(m.note || "");
+      var mm = /【([^】]+)】/.exec(nm);
+      var name = mm ? mm[1] : (nm ? nm.split(/[\/／]/)[0].slice(0, 12) : "料单");
+      var t = { id: "t" + Math.random().toString(36).slice(2, 8), name: name,
+                cost: Number(m.tipCost) || 0, note: "" };
+      d.tips.push(t);
+      m.tipId = t.id;
+    });
+    // 兜底：引用了不存在的料单就当没有
+    var ids = {};
+    d.tips.forEach(function (t) { ids[t.id] = 1; });
+    d.matches.forEach(function (m) { if (m.tipId && !ids[m.tipId]) delete m.tipId; });
+    // 生成出来的料单要落盘，否则每次刷新都重新生成、数据页显示"还没有料单"
+    if (legacy.length) setTimeout(function () { try { Store.save(true); } catch (e) {} }, 0);
+  }
+  function tipById(id) {
+    var d = D();
+    return (d.tips || []).filter(function (t) { return t.id === id; })[0] || null;
+  }
+  function tipCostTotal() {
+    var d = D();
+    if (Array.isArray(d.tips) && d.tips.length) {
+      return d.tips.reduce(function (s, t) { return s + (Number(t.cost) || 0); }, 0);
+    }
+    return d.matches.reduce(function (s, m) { return s + (Number(m.tipCost) || 0); }, 0);
+  }
+  function tipStats() {
+    var d = D(), out = {};
+    (d.tips || []).forEach(function (t) { out[t.id] = { tip: t, n: 0, pnl: 0, stake: 0, matches: [] }; });
+    d.matches.forEach(function (m) {
+      if (!m.tipId || !out[m.tipId]) return;
+      out[m.tipId].matches.push(m);
+      (m.legs || []).forEach(function (l) {
+        var r = Engine.legPnl(m, l);
+        out[m.tipId].pnl += r.pnl; out[m.tipId].stake += Number(l.stake) || 0;
+      });
+      out[m.tipId].n++;
+    });
+    return Object.keys(out).map(function (k) { return out[k]; });
+  }
+
+  function renderTipList() {
+    var box = $("#tipList");
+    if (!box) return;
+    var st = tipStats().sort(function (a, b) { return b.tip.cost - a.tip.cost; });
+    if (!st.length) { box.innerHTML = '<div class="note">还没有料单</div>'; return; }
+    var total = 0, totalPnl = 0;
+    box.innerHTML = '<div class="tbwrap"><table><thead><tr><th>料单</th><th class="num">成本</th>' +
+      '<th class="num c-sm-hide">场次</th><th class="num">跟单盈亏</th><th></th></tr></thead><tbody>' +
+      st.map(function (x) {
+        total += x.tip.cost; totalPnl += x.pnl;
+        var net = x.pnl - x.tip.cost;
+        return "<tr><td>" + esc(x.tip.name) + "</td>" +
+          '<td class="num">' + fmt(x.tip.cost) + "</td>" +
+          '<td class="num c-sm-hide">' + x.n + "</td>" +
+          '<td class="num ' + cls(net) + '">' + money(net) + "</td>" +
+          '<td><button class="btn link" data-deltip="' + esc(x.tip.id) + '">删</button></td></tr>';
+      }).join("") +
+      '</tbody><tfoot><tr class="tot"><td>合计</td><td class="num">' + fmt(total) +
+      '</td><td class="num c-sm-hide">—</td><td class="num ' + cls(totalPnl - total) + '">' +
+      money(totalPnl - total) + "</td><td></td></tr></tfoot></table></div>" +
+      '<div class="note" style="font-size:11.5px">「跟单盈亏」= 挂在这张料单下的比赛盈亏 − 料单成本。</div>';
+    $$("#tipList [data-deltip]").forEach(function (b) {
+      b.onclick = function () {
+        var id = this.dataset.deltip;
+        if (!confirm("删掉这张料单？（比赛不会被删，只是不再挂它）")) return;
+        D().tips = (D().tips || []).filter(function (t) { return t.id !== id; });
+        D().matches.forEach(function (m) { if (m.tipId === id) delete m.tipId; });
+        Store.save(true); renderTipList(); renderHeader(); toast("已删除");
+      };
+    });
+  }
+
   // ---------- 数据访问 ----------
   function D() { return Store.data; }
   // 同一场次组内按开赛时间（HH:MM）排；没填时间的排在当天有时间的后面，最后用序号兜底
@@ -1442,8 +1524,8 @@ var UI = (function () {
   function renderHeader() {
     var rows = allRows();
     var a = Engine.agg(rows);
-    var cost = 0;
-    D().matches.forEach(function (m) { cost += Number(m.tipCost) || 0; });
+    ensureTips();
+    var cost = tipCostTotal();
     var net = a.pnl - cost;
     // 三格指标：买球盈亏（盘口）/ 料单总价 / 加上料单的盈亏
     var g = $("#hGross");
@@ -1701,9 +1783,15 @@ var UI = (function () {
     if (e._isNew) h.push(pickerBlockHtml());
     h.push('<div class="fg"><div><label>日期</label><input type="date" id="eDate" value="' + esc(e.date) + '"></div>' +
       '<div><label>开赛时间（北京时间）</label><input type="time" id="eTime" value="' + esc(e.time || "") + '"></div></div>');
+    var tipOpts = '<option value="">（不属于任何料单）</option>' +
+      (D().tips || []).map(function (t) {
+        return '<option value="' + esc(t.id) + '"' + (e.tipId === t.id ? " selected" : "") + ">" +
+          esc(t.name) + "（" + fmt(t.cost) + " 元）</option>";
+      }).join("") +
+      '<option value="__new__">＋ 新建料单（多场共用一张时选这里）</option>';
     h.push('<div class="fg"><div><label>赛事 / 联赛</label><input type="text" id="eLeague" list="lgdl" value="' + esc(e.league) + '" placeholder="英超 / 欧冠 / 国王杯">' +
       '<datalist id="lgdl">' + dl + "</datalist></div>" +
-      '<div><label>料单成本（元）</label><input type="number" id="eTip" step="1" min="0" value="' + (e.tipCost || "") + '"></div></div>');
+      '<div><label>所属料单</label><select id="eTipSel">' + tipOpts + "</select></div></div>");
     h.push('<div class="fg"><div><label>主队</label><input type="text" id="eHome" value="' + esc(e.home) + '"></div>' +
       '<div><label>客队</label><input type="text" id="eAway" value="' + esc(e.away) + '"></div></div>');
     h.push('<div class="fg"><div><label>比分（主:客，未开赛留空）</label><input type="text" id="eScore" value="' + esc(e.score) + '" placeholder="2:1"></div>' +
@@ -1789,14 +1877,33 @@ var UI = (function () {
       el.onchange = function () { sync(); after(); };
     }
     B("eDate", "date"); B("eTime", "time");
-    B("eLeague", "league"); B("eTip", "tipCost", true);
+    B("eLeague", "league");
+    $("#eTipSel").onchange = function () {
+      if (this.value === "__new__") {
+        var nm = prompt("料单名称（例如 一炮红 / 三步上篮）", "");
+        if (!nm) { this.value = e.tipId || ""; return; }
+        var cs = prompt("这张料单多少钱？（只填一次，多场共用）", "");
+        var cost = Number(String(cs || "").replace(/[^\d.]/g, ""));
+        if (!isFinite(cost) || cost <= 0) { toast("金额不对，没建成"); this.value = e.tipId || ""; return; }
+        var t = { id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(), cost: cost, note: "" };
+        D().tips = D().tips || [];
+        D().tips.push(t);
+        e.tipId = t.id;
+        var opt = document.createElement("option");
+        opt.value = t.id; opt.textContent = t.name + "（" + fmt(cost) + " 元）"; opt.selected = true;
+        this.insertBefore(opt, this.lastElementChild);
+        toast("已新建料单「" + t.name + "」" + fmt(cost) + " 元，下一场选同一张即可共用");
+        return;
+      }
+      if (this.value) e.tipId = this.value; else delete e.tipId;
+    };
     B("eHome", "home"); B("eAway", "away"); B("eScore", "score"); B("eNote", "note");
     B("eHT", "ht");
     B("eCorners", "corners", true); B("eCards", "cards", true);
     $("#eSettled").onchange = function () { e.settled = this.value === "1"; };
 
     $$("#sheetB [data-f]").forEach(function (el) {
-      if (["eDate", "eTime", "eLeague", "eTip", "eHome", "eAway", "eScore", "eNote", "eHT", "eCorners", "eCards"].indexOf(el.id) >= 0) return;
+      if (["eDate", "eTime", "eLeague", "eTipSel", "eHome", "eAway", "eScore", "eNote", "eHT", "eCorners", "eCards"].indexOf(el.id) >= 0) return;
       el.oninput = function () {
         var i = +this.dataset.i, f = this.dataset.f;
         var l = e.legs[i]; if (!l) return;
@@ -1931,8 +2038,8 @@ var UI = (function () {
   // ---------- 曲线 ----------
   function viewCurve() {
     var rows = allRows();
-    var cost = 0;
-    D().matches.forEach(function (m) { cost += Number(m.tipCost) || 0; });
+    ensureTips();
+    var cost = tipCostTotal();
     var a = Engine.agg(rows);
     var net = a.pnl - cost;
 
@@ -2584,6 +2691,12 @@ var UI = (function () {
     h.push('<div class="bar"><button class="btn" id="jOut">导出 JSON</button>' +
       '<button class="btn" id="jIn">导入 JSON</button><input type="file" id="jFile" accept=".json" style="display:none"></div>');
 
+    h.push('<div class="sec">料单</div>');
+    h.push('<div class="card" style="padding:12px">' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">' +
+      '一张料单可以挂多场比赛，成本只算一次。在比赛编辑页的「所属料单」里选同一张即可。' +
+      '不改费用、只看效果。</div><div id="tipList"></div>' +
+      '<div class="bar" style="margin-top:8px"><button class="btn" id="tipAdd">＋ 新建料单</button></div></div>');
     h.push('<div class="sec">云同步（Gitee 私有仓库）</div>');
     h.push('<div class="card" style="padding:12px">' +
       '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">手机和电脑填同一套，就能互相同步，' +
@@ -2637,6 +2750,20 @@ var UI = (function () {
 
     $("#v-data").innerHTML = h.join("");
 
+    if ($("#tipAdd")) {
+      renderTipList();
+      $("#tipAdd").onclick = function () {
+        var nm = prompt("料单名称（例如 一炮红）", "");
+        if (!nm) return;
+        var cs = prompt("料单金额（元）", "");
+        var cost = Number(String(cs || "").replace(/[^\d.]/g, ""));
+        if (!isFinite(cost) || cost <= 0) { toast("金额不对"); return; }
+        D().tips = D().tips || [];
+        D().tips.push({ id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(), cost: cost, note: "" });
+        Store.save(true); renderTipList(); renderHeader();
+        toast("已新建料单，去比赛编辑页挂上即可");
+      };
+    }
     if ($("#gSave")) {
       $("#gSave").onclick = function () {
         var v = ($("#gRepo").value || "").trim().replace(/^https?:\/\/gitee\.com\//, "").replace(/\/+$/, "");
