@@ -895,7 +895,15 @@ var Store = (function () {
     load: load, save: save, flush: flush, plain: plain,
     forceFlush: forceFlush, pull: pull,
     normalize: normalize, seed: seed,
-    nextSeq: function () { return (state.data._maxSeq || 0) + 1; }
+    // 序号每次按当前最大值现算，避免缓存落后导致两台设备撞号
+    nextSeq: function () {
+      var mx = 0;
+      (state.data.matches || []).forEach(function (m) {
+        var s = Number(m.seq) || 0;
+        if (s > mx) mx = s;
+      });
+      return mx + 1;
+    }
   };
 })();
 </script>
@@ -1337,6 +1345,7 @@ var UI = (function () {
         if (x.remote) {
           res = mergeRemote(local, x.remote);
           Store.data = Store.normalize(res.data);
+          ensureSeqUnique();
           Store.save(true);
         }
         var payload = Store.plain(D());
@@ -1452,6 +1461,26 @@ var UI = (function () {
         Store.save(true); renderTipList(); renderHeader(); toast("已删除");
       };
     });
+  }
+
+  // ---------- 序号唯一性（两台设备各自递增会撞号，这里统一修） ----------
+  function ensureSeqUnique() {
+    var ms = D().matches || [];
+    var mx = 0;
+    ms.forEach(function (m) { var s = Number(m.seq) || 0; if (s > mx) mx = s; });
+    var seen = {}, dup = 0;
+    // 按 日期 → 序号 → 创建顺序 排，先出现的保留原号，后来的改成 mx+1
+    ms.slice().sort(function (a, b) {
+      var d = String(a.date || "").localeCompare(String(b.date || ""));
+      if (d) return d;
+      return (Number(a.seq) || 0) - (Number(b.seq) || 0);
+    }).forEach(function (m) {
+      var s = Number(m.seq) || 0;
+      if (!s || seen[s]) { mx += 1; m.seq = mx; dup++; }
+      seen[m.seq] = 1;
+    });
+    if (dup) setTimeout(function () { try { Store.save(true); } catch (e) {} }, 0);
+    return dup;
   }
 
   // ---------- 数据访问 ----------
@@ -3106,6 +3135,7 @@ var UI = (function () {
 
   function boot(data) {
     Store.data = data;
+    ensureSeqUnique();
     renderHeader();
     $("#tabs").onclick = function (e) {
       var b = e.target.closest("button[data-t]");
