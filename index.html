@@ -1393,26 +1393,40 @@ var UI = (function () {
   function ensureTips() {
     var d = D();
     if (!Array.isArray(d.tips)) d.tips = [];
+    var changed = false;
     var byId = {};
     d.tips.forEach(function (t) { byId[t.id] = t; });
-    var changed = false, used = {};
     d.matches.forEach(function (m) {
       var tc = Number(m.tipCost) || 0;
       if (tc <= 0) { if (m.tipId) { delete m.tipId; changed = true; } return; }
-      // 料单 id 由比赛 id 派生：同一场比赛在手机和电脑上算出同一个 id，同步不会重复
-      var tid = "tip_" + (m.id || ("s" + m.seq));
-      used[tid] = 1;
-      if (!byId[tid]) {
-        var nm = String(m.note || "");
-        var mm = /【([^】]+)】/.exec(nm);
-        byId[tid] = { id: tid, name: mm ? mm[1] : "料单", cost: tc, note: "" };
-        d.tips.push(byId[tid]); changed = true;
+      if (m.tipId && byId[m.tipId]) { return; }          // 已经挂在有效料单上，别动
+      var nm = String(m.note || "");
+      var mm = /【([^】]+)】/.exec(nm);
+      var base = mm ? mm[1] : "";
+      var ds = String(m.date || "").replace(/-/g, "");
+      // 先认领已有料单：同金额，且名字以这个名字结尾（云端带来的是「日期+名字」）
+      var found = null;
+      if (base) {
+        found = d.tips.filter(function (t) {
+          return Number(t.cost) === tc && String(t.name || "").indexOf(base) >= 0;
+        })[0] || null;
       }
-      if (m.tipId !== tid) { m.tipId = tid; changed = true; }
+      if (!found) {
+        var tid = "tip_" + (m.id || ("s" + m.seq));
+        if (byId[tid]) found = byId[tid];
+        else {
+          found = { id: tid, name: (ds + (base || "料单")), cost: tc, note: "" };
+          d.tips.push(found); byId[tid] = found; changed = true;
+        }
+      }
+      if (m.tipId !== found.id) { m.tipId = found.id; changed = true; }
     });
-    // 清掉没人引用的料单：之前重复累积就是这么产生的
+    // 只清掉「没有金额、没有比赛引用、名字还是默认料单」的垃圾项；带名字的一律保留
     var before = d.tips.length;
-    d.tips = d.tips.filter(function (t) { return used[t.id]; });
+    d.tips = d.tips.filter(function (t) {
+      var used = d.matches.some(function (m) { return m.tipId === t.id; });
+      return used || (Number(t.cost) > 0 && t.name && t.name !== "料单");
+    });
     if (d.tips.length !== before) changed = true;
     if (changed) setTimeout(function () { try { Store.save(true); } catch (e) {} }, 0);
   }
@@ -2829,7 +2843,13 @@ var UI = (function () {
         gapi("GET", base + q).then(function (r) {
           if (!r.ok || !r.data || !r.data.content) throw new Error("读取失败(" + r.status + ")");
           var remote = JSON.parse(b64decode(r.data.content));
+          // 覆盖前先保住本机的同步配置，别让云端的空设置把仓库/令牌冲掉
+          var mine = (D().settings) || {};
           Store.data = Store.normalize(remote);
+          Store.data.settings = Store.data.settings || {};
+          ["gOwner", "gRepo", "gToken", "syncUrl"].forEach(function (k) {
+            if (mine[k]) Store.data.settings[k] = mine[k];
+          });
           Store.save(true);
           GSYNC.last = new Date();
           GSYNC.msg = "已用云端覆盖本机（" + (remote.matches || []).length + " 场 / 料单 " + ((remote.tips || []).length) + " 张）";
