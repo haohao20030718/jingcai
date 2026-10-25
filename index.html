@@ -1939,7 +1939,8 @@ var UI = (function () {
     B("eDate", "date"); B("eTime", "time");
     B("eLeague", "league");
     $("#eTipSel").onchange = function () {
-      if (this.value === "__new__") {
+      var raw = this.value;
+      if (raw === "__new__") {
         var nm = prompt("料单名称（例如 一炮红 / 三步上篮）", "");
         if (!nm) { this.value = e.tipId || ""; return; }
         var cs = prompt("这张料单多少钱？（只填一次，多场共用）", "");
@@ -1948,14 +1949,30 @@ var UI = (function () {
         var t = { id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(), cost: cost, note: "" };
         D().tips = D().tips || [];
         D().tips.push(t);
-        e.tipId = t.id;
+        e.tipId = t.id; e.tipCost = cost;
         var opt = document.createElement("option");
         opt.value = t.id; opt.textContent = t.name + "（" + fmt(cost) + " 元）"; opt.selected = true;
         this.insertBefore(opt, this.lastElementChild);
-        toast("已新建料单「" + t.name + "」" + fmt(cost) + " 元，下一场选同一张即可共用");
-        return;
+        raw = t.id;
+        toast("已新建料单「" + t.name + "」" + fmt(cost) + " 元");
       }
-      if (this.value) e.tipId = this.value; else delete e.tipId;
+      // 立刻同时写进「正在编辑的对象」和「库里那条记录」，
+      // 否则选完触发的重绘会把编辑对象重新克隆，刚选的料单就丢了
+      // 记到临时变量里：即使中途重绘把下拉重建，保存时也能拿到这次的选择
+      if (raw && raw !== "__new__") window._pendingTip = raw; else window._pendingTip = null;
+      if (raw) {
+        e.tipId = raw;
+        var tp = (D().tips || []).filter(function (x) { return x.id === raw; })[0];
+        if (tp) e.tipCost = Number(tp.cost) || 0;
+      } else { delete e.tipId; e.tipCost = 0; }
+      if (e.id) {
+        var base = D().matches.filter(function (x) { return x.id === e.id; })[0];
+        if (base) {
+          base.tipId = e.tipId; base.tipCost = e.tipCost;
+          // 选中即落盘：不依赖后面点「保存」，避免重绘把它冲掉
+          try { Store.save(true); } catch (err) {}
+        }
+      }
     };
     B("eHome", "home"); B("eAway", "away"); B("eScore", "score"); B("eNote", "note");
     B("eHT", "ht");
@@ -2026,6 +2043,16 @@ var UI = (function () {
 
   function saveEdit() {
     var e = editing;
+    // 以「保存这一刻下拉框的实际值」为准，避免中途重绘把选择冲掉
+    var selEl = $("#eTipSel");
+    var chosen = selEl ? selEl.value : "";
+    if (!chosen || chosen === "__new__") chosen = window._pendingTip || "";
+    if (chosen && chosen !== "__new__") {
+      e.tipId = chosen;
+      var tp = (D().tips || []).filter(function (x) { return x.id === chosen; })[0];
+      e.tipCost = tp ? (Number(tp.cost) || 0) : (Number(e.tipCost) || 0);
+    } else { delete e.tipId; e.tipCost = 0; }
+    window._pendingTip = null;
     e.legs = e.legs.filter(function (l) { return l.bet || l.stake; });
     e.legs.forEach(function (l) {
       if (l.bet) l.bet = String(l.bet).trim();
