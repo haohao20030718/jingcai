@@ -2748,7 +2748,8 @@ var UI = (function () {
       '<input type="password" id="gToken" placeholder="粘贴 Gitee 私人令牌" value="' +
       esc((D().settings || {}).gToken || "") + '"></div></div>' +
       '<div class="bar" style="margin-top:8px"><button class="btn primary" id="gSave">保存并同步</button>' +
-      '<button class="btn" id="gGo">立即同步</button></div>' +
+      '<button class="btn" id="gGo">立即同步</button>' +
+      '<button class="btn" id="gPull">用云端覆盖本机</button></div>' +
       '<div id="gInfo"></div></div>');
     h.push('<div class="sec">批量校正</div>');
     h.push('<div class="list-tool">');
@@ -2818,6 +2819,26 @@ var UI = (function () {
         syncGitee(false);
       };
       $("#gGo").onclick = function () { syncGitee(false); };
+      $("#gPull").onclick = function () {
+        var c = gconf();
+        if (!c.token || !c.owner || !c.repo) { toast("先填仓库和令牌"); return; }
+        if (!confirm("用云端的账本整份覆盖这台设备？（本机未同步的改动会丢）")) return;
+        var base = "/repos/" + encodeURIComponent(c.owner) + "/" + encodeURIComponent(c.repo) + "/contents/" + c.path;
+        var q = "?access_token=" + encodeURIComponent(c.token) + "&ref=master&t=" + Date.now();
+        GSYNC.msg = "正在拉取云端…"; renderGitee();
+        gapi("GET", base + q).then(function (r) {
+          if (!r.ok || !r.data || !r.data.content) throw new Error("读取失败(" + r.status + ")");
+          var remote = JSON.parse(b64decode(r.data.content));
+          Store.data = Store.normalize(remote);
+          Store.save(true);
+          GSYNC.last = new Date();
+          GSYNC.msg = "已用云端覆盖本机（" + (remote.matches || []).length + " 场 / 料单 " + ((remote.tips || []).length) + " 张）";
+          renderGitee(); render();
+          toast(GSYNC.msg);
+        }).catch(function (e) {
+          GSYNC.msg = "拉取失败：" + e.message; renderGitee();
+        });
+      };
       renderGitee();
     }
 
