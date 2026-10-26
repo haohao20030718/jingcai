@@ -2,7 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<script>
+/* 禁止双指缩放 / 双击放大（iOS 上 user-scalable 不总生效，这里再兜一层） */
+document.addEventListener("gesturestart", function (e) { e.preventDefault(); }, { passive: false });
+document.addEventListener("gesturechange", function (e) { e.preventDefault(); }, { passive: false });
+document.addEventListener("dblclick", function (e) { e.preventDefault(); }, { passive: false });
+</script>
 <meta name="theme-color" content="#1F4E79">
 <title>足球竞彩台</title>
 <!-- 手机装到桌面：Android 走 manifest，iOS 走 apple-mobile-web-app-* -->
@@ -277,7 +283,7 @@ details[open] summary::before{content:"▾ "}
   .tbwrap th,.tbwrap td{padding:7px 6px}
 }
 /* ---- 手机桌面 App（PWA）体感：安全区、触控尺寸、禁用系统橡皮筋 ---- */
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;touch-action:manipulation}
 body{overscroll-behavior-y:none}
 header{padding-top:env(safe-area-inset-top)}
 main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
