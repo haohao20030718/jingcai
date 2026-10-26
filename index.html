@@ -1988,7 +1988,11 @@ var UI = (function () {
       el.oninput = function () {
         var i = +this.dataset.i, f = this.dataset.f;
         var l = e.legs[i]; if (!l) return;
-        l[f] = this.value === "" ? (f === "bet" ? "" : null) : (f === "bet" ? this.value : Number(this.value));
+        // 文字类字段（下注内容、这笔的备注）原样存；其余当数字
+        var isText = (f === "bet" || f === "note");
+        l[f] = (this.value === "")
+          ? (isText ? "" : null)
+          : (isText ? this.value : Number(this.value));
         if (f === "bet" || f === "odds" || f === "stake" || f === "manual") {
           // 只刷新结算提示，不重建整表（保住输入焦点）
           refreshAutoLine(i);
