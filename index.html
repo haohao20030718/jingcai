@@ -1988,6 +1988,7 @@ var UI = (function () {
         if (!isFinite(cost) || cost <= 0) { toast("金额不对，没建成"); this.value = e.tipId || ""; return; }
         var t = { id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(), cost: cost, note: "" };
         D().tips = D().tips || [];
+        t.domain = mDomain(e);
         D().tips.push(t);
         e.tipId = t.id; e.tipCost = cost;
         var opt = document.createElement("option");
@@ -2205,7 +2206,7 @@ var UI = (function () {
     h.push('<div class="kpis">');
     h.push(kpi("累计净盈亏", money(net), "含料单 −" + fmt(cost), cls(net)));
     h.push(kpi("回报率 ROI", fmt(a.roi, 1) + "%", "记录盈亏 / 总投入", cls(a.roi)));
-    h.push(kpi("总投入", fmt(a.stake), a.n + " 笔 · " + D().matches.length + " 场"));
+    h.push(kpi("总投入", fmt(a.stake), a.n + " 笔 · " + D().matches.filter(inDomain).length + " 场"));
     h.push(kpi("最大回撤", "−" + fmt(maxDD), "峰值回落", maxDD > 0 ? "lose" : ""));
     h.push("</div>");
 
@@ -2385,7 +2386,7 @@ var UI = (function () {
 
     h.push('<div class="tbwrap"><table><thead><tr><th>周期</th><th>场次</th><th class="c-sm-hide">注数</th>' +
       '<th class="c-sm-hide">投入</th><th>盈亏</th><th class="c-sm-hide">料单</th><th>净盈亏</th><th>ROI</th></tr></thead><tbody>' +
-      body + "</tbody><tfoot><tr class=\"tot\"><td>合计</td><td>" + D().matches.length + '</td><td class="num c-sm-hide">' + tot.n +
+      body + "</tbody><tfoot><tr class=\"tot\"><td>合计</td><td>" + D().matches.filter(inDomain).length + '</td><td class="num c-sm-hide">' + tot.n +
       '</td><td class="num c-sm-hide">' + fmt(tot.stake) + '</td><td class="num ' + cls(tot.pnl) + '">' + money(tot.pnl) +
       '</td><td class="num c-sm-hide">−' + fmt(tot.cost) + '</td><td class="num ' + cls(tot.pnl - tot.cost) + '">' + money(tot.pnl - tot.cost) +
       '</td><td class="num">' + fmt(tot.stake ? tot.pnl / tot.stake * 100 : 0, 1) + "%</td></tr></tfoot></table></div>");
@@ -2827,7 +2828,11 @@ var UI = (function () {
       '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">' +
       '一张料单可以挂多场比赛，成本只算一次。在比赛编辑页的「所属料单」里选同一张即可。' +
       '不改费用、只看效果。</div><div id="tipList"></div>' +
-      '<div class="bar" style="margin-top:8px"><button class="btn" id="tipAdd">＋ 新建料单</button></div></div>');
+      '<div class="bar" style="margin-top:8px">' +
+      '<select class="sel" id="tipDom" style="max-width:120px">' +
+      '<option value="football">足球料单</option><option value="basketball">篮球料单</option>' +
+      '<option value="esports">电竞料单</option></select>' +
+      '<button class="btn primary" id="tipAdd">＋ 新建料单</button></div></div>');
     h.push('<div class="sec">云同步（Gitee 私有仓库）</div>');
     h.push('<div class="card" style="padding:12px">' +
       '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">手机和电脑填同一套，就能互相同步，' +
@@ -2891,7 +2896,9 @@ var UI = (function () {
         var cost = Number(String(cs || "").replace(/[^\d.]/g, ""));
         if (!isFinite(cost) || cost <= 0) { toast("金额不对"); return; }
         D().tips = D().tips || [];
-        D().tips.push({ id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(), cost: cost, note: "" });
+        var pickDom = ($("#tipDom") && $("#tipDom").value) || (domain === "all" ? "football" : domain);
+        D().tips.push({ id: "t" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(),
+                        cost: cost, note: "", domain: pickDom });
         Store.save(true); renderTipList(); renderHeader();
         toast("已新建料单，去比赛编辑页挂上即可");
       };
