@@ -80,6 +80,9 @@ header{
 .pk-row .t1{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-row .t2{font-size:11.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-row .sc{font-size:14px;font-weight:660;color:var(--ink);white-space:nowrap}
+.dom{max-width:920px;margin:0 auto;padding:0 14px 8px;display:flex;gap:6px}
+.dom button{flex:1;min-height:38px;border:1px solid var(--line);background:var(--card);border-radius:8px;font-size:13px;color:var(--ink2)}
+.dom button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .chip{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:5px;background:var(--accent-weak);
       color:var(--accent);border:1px solid #DCE6F0;vertical-align:1px}
 
@@ -316,6 +319,12 @@ main{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
     <div><div class="k">买球盈亏</div><div class="v num" id="hGross">0</div></div>
     <div><div class="k">料单总价</div><div class="v num" id="hCost">0</div></div>
     <div><div class="k">加上料单的盈亏</div><div class="v num" id="hNet2">0</div></div>
+  </div>
+  <div class="dom" id="domBar">
+    <button data-d="all" class="on">全部</button>
+    <button data-d="football">足球</button>
+    <button data-d="basketball">篮球</button>
+    <button data-d="esports">电竞</button>
   </div>
   <nav class="tabs" id="tabs">
     <button data-t="entry" class="on">录入</button>
@@ -1153,6 +1162,10 @@ var UI = (function () {
   }
 
   // ---------- 撤回（快照栈，任何改动都能退一步） ----------
+  var domain = "all";
+  var DOMAINS = [["all","全部"],["football","足球"],["basketball","篮球"],["esports","电竞"]];
+  function mDomain(m){ return (m && m.domain) || "football"; }
+  function inDomain(m){ return domain === "all" || mDomain(m) === domain; }
   var undoStack = [], undoPending = null, UNDO_MAX = 40;
   function snap() { try { return JSON.stringify(Store.plain(Store.data)); } catch (e) { return null; } }
   // 开始一次可撤回的操作：先把当前状态拍下来
@@ -1427,7 +1440,7 @@ var UI = (function () {
         var tid = "tip_" + (m.id || ("s" + m.seq));
         if (byId[tid]) found = byId[tid];
         else {
-          found = { id: tid, name: (ds + (base || "料单")), cost: tc, note: "" };
+          found = { id: tid, name: (ds + (base || "料单")), cost: tc, note: "", domain: mDomain(m) };
           d.tips.push(found); byId[tid] = found; changed = true;
         }
       }
@@ -1449,14 +1462,21 @@ var UI = (function () {
   function tipCostTotal() {
     var d = D();
     if (Array.isArray(d.tips) && d.tips.length) {
-      return d.tips.reduce(function (s, t) { return s + (Number(t.cost) || 0); }, 0);
+      return d.tips.reduce(function (s, t) {
+        var tdm = t.domain || "football";
+        if (domain !== "all" && tdm !== domain) return s;
+        return s + (Number(t.cost) || 0);
+      }, 0);
     }
-    return d.matches.reduce(function (s, m) { return s + (Number(m.tipCost) || 0); }, 0);
+    return d.matches.filter(inDomain).reduce(function (s, m) { return s + (Number(m.tipCost) || 0); }, 0);
   }
   function tipStats() {
     var d = D(), out = {};
-    (d.tips || []).forEach(function (t) { out[t.id] = { tip: t, n: 0, pnl: 0, stake: 0, matches: [] }; });
-    d.matches.forEach(function (m) {
+    (d.tips || []).forEach(function (t) {
+      if (domain !== "all" && (t.domain || "football") !== domain) return;
+      out[t.id] = { tip: t, n: 0, pnl: 0, stake: 0, matches: [] };
+    });
+    d.matches.filter(inDomain).forEach(function (m) {
       if (!m.tipId || !out[m.tipId]) return;
       out[m.tipId].matches.push(m);
       (m.legs || []).forEach(function (l) {
@@ -1539,9 +1559,9 @@ var UI = (function () {
     if (ha && a.time !== b.time) return a.time < b.time ? 1 : -1;
     return (b.seq || 0) - (a.seq || 0);
   }
-  function sorted() { return D().matches.slice().sort(cmpTimeDesc); }   // 系统内：倒序，新的在前
-  function sortedAsc() { return D().matches.slice().sort(cmpTimeAsc); } // 导出/编号：正序，早的在前
-  function allRows() { return Engine.flatten(D().matches); }
+  function sorted() { return D().matches.filter(inDomain).sort(cmpTimeDesc); }   // 系统内：倒序，新的在前
+  function sortedAsc() { return D().matches.filter(inDomain).sort(cmpTimeAsc); } // 导出/编号：正序，早的在前
+  function allRows() { return Engine.flatten(D().matches.filter(inDomain)); }
   function filtered() {
     var q = filters.q.trim().toLowerCase();
     return sorted().filter(function (m) {
@@ -1606,7 +1626,7 @@ var UI = (function () {
     var nUnsure = D().matches.filter(function (m) { return m.score && !m.settled; }).length;
     var modeTxt = Store.mode === "server" ? "局域网共享" : "本机离线";
     $("#subline").innerHTML = '<span class="chip">' + modeTxt + "</span> " +
-      D().matches.length + " 场 · " + a.n + " 笔" +
+      (domain==="all" ? "" : ({football:"足球 · ",basketball:"篮球 · ",esports:"电竞 · "}[domain] || "")) + D().matches.filter(inDomain).length + " 场 · " + a.n + " 笔" +
       (nOpen ? " · 待赛果 " + nOpen : "") +
       (nUnsure ? " · 待确认 " + nUnsure : "");
     var tb = $$("#tabs button");
@@ -1815,6 +1835,7 @@ var UI = (function () {
       var today = Engine.ymd(new Date());
       editing = {
         id: "m" + Date.now().toString(36), seq: Store.nextSeq(), date: today, time: "",
+        domain: (domain === "all" ? "football" : domain),
         league: "", leagueConf: "", home: "", away: "", score: "", note: "", tipCost: 0,
         settled: false, legs: [{ id: "b" + Date.now().toString(36), bet: "", odds: "", stake: "", pnl: null, manual: null }],
         _isNew: true
@@ -1847,6 +1868,10 @@ var UI = (function () {
 
     var h = [];
     if (e._isNew) h.push(pickerBlockHtml());
+    var dsel = [["football","足球"],["basketball","篮球"],["esports","电竞"]].map(function (x) {
+      return '<option value="' + x[0] + '"' + (mDomain(e) === x[0] ? " selected" : "") + ">" + x[1] + "</option>";
+    }).join("");
+    h.push('<div class="fg one"><div><label>领域</label><select id="eDomain">' + dsel + "</select></div></div>");
     h.push('<div class="fg"><div><label>日期</label><input type="date" id="eDate" value="' + esc(e.date) + '"></div>' +
       '<div><label>开赛时间（北京时间）</label><input type="time" id="eTime" value="' + esc(e.time || "") + '"></div></div>');
     var tipOpts = '<option value="">（不属于任何料单）</option>' +
@@ -1947,6 +1972,11 @@ var UI = (function () {
       el.onchange = function () { sync(); after(); };
     }
     B("eDate", "date"); B("eTime", "time");
+    $("#eDomain").onchange = function () {
+      e.domain = this.value;
+      var base = D().matches.filter(function (x) { return x.id === e.id; })[0];
+      if (base) { base.domain = this.value; try { Store.save(true); } catch (err) {} }
+    };
     B("eLeague", "league");
     $("#eTipSel").onchange = function () {
       var raw = this.value;
@@ -3240,6 +3270,14 @@ var UI = (function () {
       var b = e.target.closest("button[data-t]");
       if (!b) return;
       switchTo(b.dataset.t);
+    };
+    $("#domBar").onclick = function (e) {
+      var b = e.target.closest("button[data-d]");
+      if (!b) return;
+      domain = b.dataset.d;
+      $$("#domBar button").forEach(function (x) { x.classList.toggle("on", x.dataset.d === domain); });
+      page = 1;
+      render();
     };
     $("#mask").onclick = closeSheet;
     $("#sheetX").onclick = closeSheet;
