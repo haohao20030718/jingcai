@@ -1540,6 +1540,23 @@ var UI = (function () {
     return dup;
   }
 
+  // 把料单成本按「张」分摊到周期（每张只算一次，归到它最早那场比赛的周期），并按领域过滤
+  function costIntoBuckets(keyFn) {
+    var out = {}, mByKey = {};
+    D().matches.filter(inDomain).forEach(function (m) { mByKey[m.id] = keyFn(m); });
+    var counted = {};
+    D().matches.filter(inDomain).forEach(function (m) {
+      if (!m.tipId || counted[m.tipId]) return;
+      var t = tipById(m.tipId);
+      if (!t) return;
+      counted[m.tipId] = 1;
+      var k = mByKey[m.id] || "?";
+      out[k] = (out[k] || 0) + (Number(t.cost) || 0);
+    });
+    // 没挂比赛、但属于当前领域且按场记的老料单成本，兜到 tipCostTotal 里已算，这里不重复
+    return out;
+  }
+
   // ---------- 数据访问 ----------
   function D() { return Store.data; }
   // 同一场次组内按开赛时间（HH:MM）排；没填时间的排在当天有时间的后面，最后用序号兜底
@@ -2183,10 +2200,10 @@ var UI = (function () {
       d.pnl += r.pnl; d.stake += r.stake; d.n++;
       if (r.pnl > 0.004) d.win++;
     });
-    D().matches.forEach(function (m) {
-      if (!m.date) return;
-      var d = byDay[m.date] || (byDay[m.date] = { pnl: 0, stake: 0, n: 0, win: 0 });
-      d.cost = (d.cost || 0) + (Number(m.tipCost) || 0);
+    var costDay = costIntoBuckets(function (m) { return m.date || "?"; });
+    Object.keys(costDay).forEach(function (k) {
+      var d = byDay[k] || (byDay[k] = { pnl: 0, stake: 0, n: 0, win: 0 });
+      d.cost = costDay[k];
     });
     var dates = Object.keys(byDay).sort();
     var acc = 0, peak = 0, maxDD = 0, series = [];
@@ -2357,10 +2374,8 @@ var UI = (function () {
       : sumMode === "week" ? function (r) { return r.date ? Engine.weekStart(r.date) : ""; }
         : function (r) { return r.date ? r.date.slice(0, 7) : ""; };
     var groups = Engine.groupBy(rows, function (r) { return keyFn(r) || "?"; });
-    var costBy = {};
-    D().matches.forEach(function (m) {
-      var k = sumMode === "day" ? m.date : sumMode === "week" ? (m.date ? Engine.weekStart(m.date) : "?") : (m.date ? m.date.slice(0, 7) : "?");
-      costBy[k] = (costBy[k] || 0) + (Number(m.tipCost) || 0);
+    var costBy = costIntoBuckets(function (m) {
+      return sumMode === "day" ? m.date : sumMode === "week" ? (m.date ? Engine.weekStart(m.date) : "?") : (m.date ? m.date.slice(0, 7) : "?");
     });
     groups.sort(function (a, b) { return a.key < b.key ? 1 : -1; });
 
@@ -2413,7 +2428,8 @@ var UI = (function () {
     var rows = allRows();
     var a = Engine.agg(rows);
     var cost = 0, costN = 0;
-    D().matches.forEach(function (m) { var t = Number(m.tipCost) || 0; cost += t; if (t) costN++; });
+    cost = tipCostTotal();
+    D().matches.filter(inDomain).forEach(function (m) { if (m.tipId) costN++; }); costN = (D().tips || []).filter(function (t) { return domain === "all" || (t.domain || "football") === domain; }).length;
     var net = a.pnl - cost;
 
     var byMk = Engine.groupBy(rows, function (r) { return r.market; });
