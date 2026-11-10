@@ -1906,11 +1906,25 @@ var UI = (function () {
       '<div><label>是否结算</label><select id="eSettled"><option value="0"' + (!e.settled ? " selected" : "") + '>未结算</option>' +
       '<option value="1"' + (e.settled ? " selected" : "") + '>已结算</option></select></div></div>');
     h.push('<div class="fg one"><div><label>备注（代买人 / 料单）</label><input type="text" id="eNote" value="' + esc(e.note) + '"></div></div>');
-    h.push('<div class="sec" style="margin:10px 0 4px">额外数据（半场盘 / 角球 / 黄牌 需要它才能自动算）</div>');
-    h.push('<div class="fg"><div><label>半场比分（主:客）</label><input type="text" id="eHT" value="' + esc(e.ht || "") + '" placeholder="1:0"></div>' +
-      '<div><label>角球数（合计）</label><input type="number" step="1" id="eCorners" value="' + (e.corners == null ? "" : e.corners) + '" placeholder="10"></div></div>');
-    h.push('<div class="fg"><div><label>黄牌数（合计）</label><input type="number" step="1" id="eCards" value="' + (e.cards == null ? "" : e.cards) + '" placeholder="4"></div>' +
-      '<div><label>&nbsp;</label><div class="note" style="margin:0">留空则该类注单显示「需角球数/需黄牌数」</div></div></div>');
+    var dm = mDomain(e);
+    if (dm === "basketball") {
+      h.push('<div class="sec" style="margin:10px 0 4px">篮球数据（半场盘 / 加时 需要它才能自动算）</div>');
+      h.push('<div class="fg"><div><label>半场比分（主:客）</label><input type="text" id="eHT" value="' + esc(e.ht || "") + '" placeholder="52:48"></div>' +
+        '<div><label>是否加时</label><select id="eOT">' +
+        '<option value="0"' + (!e.ot ? " selected" : "") + '>常规时间结束</option>' +
+        '<option value="1"' + (e.ot ? " selected" : "") + '>打了加时</option></select></div></div>');
+      h.push('<div class="note" style="margin:0 0 6px">篮球的让分、大小分直接用上面的全场比分结算；半场盘用半场比分。单节盘暂不支持，会标「需人工」。</div>');
+    } else if (dm === "esports") {
+      h.push('<div class="sec" style="margin:10px 0 4px">电竞数据（局分 用于总局数、让局）</div>');
+      h.push('<div class="fg"><div><label>小局比分（胜:负，如 2:1）</label><input type="text" id="eHT" value="' + esc(e.ht || "") + '" placeholder="2:1"></div>' +
+        '<div><label>&nbsp;</label><div class="note" style="margin:0">用来算「总局数 2.5」「让局」这类注单</div></div></div>');
+    } else {
+      h.push('<div class="sec" style="margin:10px 0 4px">额外数据（半场盘 / 角球 / 黄牌 需要它才能自动算）</div>');
+      h.push('<div class="fg"><div><label>半场比分（主:客）</label><input type="text" id="eHT" value="' + esc(e.ht || "") + '" placeholder="1:0"></div>' +
+        '<div><label>角球数（合计）</label><input type="number" step="1" id="eCorners" value="' + (e.corners == null ? "" : e.corners) + '" placeholder="10"></div></div>');
+      h.push('<div class="fg"><div><label>黄牌数（合计）</label><input type="number" step="1" id="eCards" value="' + (e.cards == null ? "" : e.cards) + '" placeholder="4"></div>' +
+        '<div><label>&nbsp;</label><div class="note" style="margin:0">留空则该类注单显示「需角球数/需黄牌数」</div></div></div>');
+    }
 
     h.push('<div class="sec" style="margin:14px 0 6px">注单 <span class="num" id="legCount">' + e.legs.length + " 笔</span></div>");
     h.push('<div class="lgs">');
@@ -2034,7 +2048,9 @@ var UI = (function () {
     };
     B("eHome", "home"); B("eAway", "away"); B("eScore", "score"); B("eNote", "note");
     B("eHT", "ht");
-    B("eCorners", "corners", true); B("eCards", "cards", true);
+    if ($("#eOT")) $("#eOT").onchange = function () { e.ot = this.value === "1"; };
+    if ($("#eCorners")) B("eCorners", "corners", true);
+    if ($("#eCards")) B("eCards", "cards", true);
     $("#eSettled").onchange = function () { e.settled = this.value === "1"; };
 
     $$("#sheetB [data-f]").forEach(function (el) {
@@ -3140,20 +3156,31 @@ var UI = (function () {
   function exportXlsx(mode) {
     try {
       mode = EXPORT_HEAD[mode] ? mode : "time";
-      var b = buildRows(mode);
-      var u8 = XL.build("足球竞彩详情表", b.rows, {
-        cols: exportCols(mode),
-        freeze: 3,
-        merges: b.merges,
-        rowHeights: b.heights,
-        autoFilter: b.autoFilter,
-        defH: 15
-      });
-      var blob = new Blob([u8], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      var DOMS = [["football", "足球"], ["basketball", "篮球"], ["esports", "电竞"]];
+      var old = domain, made = 0, ymd = Engine.ymd(new Date()).replace(/-/g, "");
       var tag = mode === "full" ? "_含赛事" : (mode === "raw" ? "_原表" : "");
-      var name = "足球竞彩详情表_" + Engine.ymd(new Date()).replace(/-/g, "") + tag + ".xlsx";
-      download(blob, name);
-      toast("已导出 " + name);
+      DOMS.forEach(function (d, idx) {
+        if (!D().matches.filter(function (m) { return mDomain(m) === d[0]; }).length) return;
+        domain = d[0];
+        var b = buildRows(mode);
+        if (b.rows && b.rows[0] && b.rows[0][0]) {
+          b.rows[0][0] = { v: "竞彩详情表 · " + d[1], t: "s", s: 1 };
+        }
+        var u8 = XL.build("竞彩详情表", b.rows, {
+          cols: exportCols(mode), freeze: 3, merges: b.merges,
+          rowHeights: b.heights, autoFilter: b.autoFilter, defH: 15
+        });
+        var nm = "竞彩详情表_" + d[1] + "_" + ymd + tag + ".xlsx";
+        var bytes = u8.slice(0);
+        setTimeout(function () {
+          download(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), nm);
+        }, idx * 500);
+        made++;
+      });
+      domain = old;
+      toast(made ? ("已导出 " + made + " 个附表：" + DOMS.filter(function (d) {
+        return D().matches.some(function (m) { return mDomain(m) === d[0]; });
+      }).map(function (d) { return d[1]; }).join("、")) : "没有可导出的比赛");
     } catch (e) {
       toast("导出失败：" + e.message);
       console.error(e);
