@@ -1761,14 +1761,27 @@ var UI = (function () {
     });
   }
 
+  // 串关编辑面板：像录比赛一样逐场填（主客队/日期/赛事/赛果/下注/赔率）+ 备注 + 总体金额
   function openParlaySheet(pid) {
     ensureParlays();
     var p = pid ? parlayById(pid) : null;
     var draft = p ? JSON.parse(JSON.stringify(p))
-                  : { id: null, name: "", unit: 2, multiple: 1, options: [],
+                  : { id: null, name: "", unit: 2, multiple: 1, note: "", options: [],
                       date: Engine.ymd(new Date()), domain: (domain === "all" ? "football" : domain) };
-    if (!Array.isArray(draft.options)) draft.options = [];
-    if (!draft.options.length) draft.options.push({ matchId: "", bet: "", odds: null });
+
+    // 把扁平的 options 按比赛分组
+    function toGroups(opts) {
+      var g = [], idx = {};
+      (opts || []).forEach(function (o) {
+        var k = o.matchId || ("new_" + g.length);
+        if (!idx[k]) { idx[k] = { matchId: o.matchId || "", home: o.home || "", away: o.away || "",
+                                 date: o.date || "", league: o.league || "", score: o.score || "", opts: [] }; g.push(idx[k]); }
+        idx[k].opts.push({ bet: o.bet || "", odds: o.odds });
+      });
+      if (!g.length) g.push({ matchId: "", home: "", away: "", date: draft.date || "", league: "", score: "", opts: [{ bet: "", odds: null }] });
+      return g;
+    }
+    var groups = toGroups(draft.options);
 
     var old = document.getElementById("plSheet");
     if (old) old.remove();
@@ -1776,109 +1789,106 @@ var UI = (function () {
     mask.id = "plSheet";
     mask.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-end";
     var box = document.createElement("div");
-    box.style.cssText = "background:var(--card);width:100%;max-height:88vh;overflow:auto;border-radius:14px 14px 0 0;padding:14px";
+    box.style.cssText = "background:var(--card);width:100%;max-height:90vh;overflow:auto;border-radius:14px 14px 0 0;padding:14px";
     box.innerHTML =
-      '<div style="display:flex;align-items:center;margin-bottom:10px">' +
-      '<b style="font-size:16px">' + (p ? "编辑串关" : "新增串关") + "</b><div style=\"flex:1\"></div>" +
+      '<div style="display:flex;align-items:center;margin-bottom:10px"><b style="font-size:16px">' +
+      (p ? "编辑串关" : "新增串关") + '</b><div style="flex:1"></div>' +
       '<button class="btn sm" id="plClose">关闭</button></div>' +
-      '<div class="fg"><div><label>名称</label><input id="plName" placeholder="如 2611151期 2串1" value="' + esc(draft.name) + '"></div>' +
+      '<div class="fg"><div><label>名称</label><input id="plName" placeholder="如 2611151期 2串1" value="' + esc(draft.name || "") + '"></div>' +
       '<div><label>倍数</label><input id="plMult" type="number" step="1" value="' + (draft.multiple || 1) + '"></div></div>' +
-      '<div class="note" style="margin:6px 0">同一个「场」里加多个选项＝或；不同场＝且。单注固定 2 元。</div>' +
-      '<div id="plOpts"></div>' +
-      '<div class="bar" style="margin-top:8px"><button class="btn" id="plAddOpt">＋ 加一个选项</button>' +
-      '<button class="btn primary" id="plSave">保存</button></div>';
+      '<div style="margin-top:8px"><label style="font-size:12px;color:var(--muted)">备注</label>' +
+      '<input id="plNote" placeholder="代买人 / 期号等" value="' + esc(draft.note || "") + '"></div>' +
+      '<div id="plGroups"></div>' +
+      '<div class="bar" style="margin-top:10px"><button class="btn" id="plAddMatch">＋ 加一场</button>' +
+      '<button class="btn primary" id="plSave">保存</button></div>' +
+      '<div class="note" id="plInfo" style="margin-top:6px"></div>';
     mask.appendChild(box);
     document.body.appendChild(mask);
 
-    function drawOpts() {
-      var list = $("#plOpts", box);
-      list.innerHTML = draft.options.map(function (o, i) {
-        var sel = '<option value="">选比赛…</option>' + D().matches.slice().sort(function (a, b) {
-          return (Number(b.seq) || 0) - (Number(a.seq) || 0);
-        }).slice(0, 400).map(function (m) {
-          var t = "#" + m.seq + " " + (m.home || "") + " vs " + (m.away || "") + (m.date ? " " + m.date : "");
-          return '<option value="' + esc(m.id) + '"' + (o.matchId === m.id ? " selected" : "") + ">" + esc(t) + "</option>";
+    function draw() {
+      var wrap = $("#plGroups", box);
+      wrap.innerHTML = groups.map(function (g, gi) {
+        var rows = g.opts.map(function (o, oi) {
+          return '<div style="display:flex;gap:6px;margin-top:6px">' +
+            '<input data-gb="' + gi + "_" + oi + '" placeholder="下注内容，如 比分 2:0" value="' + esc(o.bet) + '" style="flex:2">' +
+            '<input data-go="' + gi + "_" + oi + '" type="number" step="0.01" placeholder="赔率" value="' + (o.odds == null ? "" : o.odds) + '" style="flex:1">' +
+            '<button class="btn sm" data-gd="' + gi + "_" + oi + '">删</button></div>';
         }).join("");
-        return '<div class="fg" style="align-items:end;gap:6px">' +
-          '<div style="flex:2"><select data-om="' + i + '">' + sel + "</select></div>" +
-          '<div style="flex:1"><input data-ob="' + i + '" placeholder="下注内容" value="' + esc(o.bet || "") + '"></div>' +
-          '<div style="flex:1"><input data-oo="' + i + '" type="number" step="0.01" placeholder="赔率" value="' + (o.odds == null ? "" : o.odds) + '"></div>' +
-          '<div style="flex:1"><input data-os="' + i + '" placeholder="赛果 2:0" value="' + esc(o.score || "") + '"></div>' +
-          '<button class="btn sm" data-odel="' + i + '">删</button></div>';
+        return '<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<b>第 ' + (gi + 1) + ' 场</b>' +
+          '<button class="btn sm" data-gdel="' + gi + '">删这场</button></div>' +
+          '<div class="fg" style="margin-top:6px">' +
+          '<div><label>主队</label><input data-gh="' + gi + '" value="' + esc(g.home) + '"></div>' +
+          '<div><label>客队</label><input data-ga="' + gi + '" value="' + esc(g.away) + '"></div></div>' +
+          '<div class="fg" style="margin-top:6px">' +
+          '<div><label>日期</label><input type="date" data-gdate="' + gi + '" value="' + esc(g.date) + '"></div>' +
+          '<div><label>赛事</label><input data-gleague="' + gi + '" value="' + esc(g.league) + '"></div></div>' +
+          '<div style="margin-top:6px"><label style="font-size:12px;color:var(--muted)">赛果（主:客）</label>' +
+          '<input data-gs="' + gi + '" placeholder="2:0" value="' + esc(g.score) + '"></div>' +
+          '<div style="margin-top:8px;font-size:12px;color:var(--muted)">下注内容（同一场多个结果＝或）</div>' + rows +
+          '<button class="btn sm" data-gadd="' + gi + '" style="margin-top:6px">＋ 加一个结果</button>' +
+          '</div>';
       }).join("");
-      $$("[data-om]", list).forEach(function (el) {
-        el.onchange = function () { draft.options[+this.dataset.om].matchId = this.value; refreshInfo(); };
+      $$("[data-gh]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gh].home = this.value; }; });
+      $$("[data-ga]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.ga].away = this.value; }; });
+      $$("[data-gdate]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gdate].date = this.value; }; });
+      $$("[data-gleague]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gleague].league = this.value; }; });
+      $$("[data-gs]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gs].score = this.value.trim(); }; });
+      $$("[data-gb]", wrap).forEach(function (el) {
+        el.oninput = function () { var t = this.dataset.gb.split("_"); groups[+t[0]].opts[+t[1]].bet = this.value; };
       });
-      $$("[data-ob]", list).forEach(function (el) {
-        el.oninput = function () { draft.options[+this.dataset.ob].bet = this.value; };
+      $$("[data-go]", wrap).forEach(function (el) {
+        el.oninput = function () { var t = this.dataset.go.split("_"); groups[+t[0]].opts[+t[1]].odds = this.value === "" ? null : Number(this.value); info(); };
       });
-      $$("[data-oo]", list).forEach(function (el) {
-        el.oninput = function () {
-          draft.options[+this.dataset.oo].odds = this.value === "" ? null : Number(this.value);
-          refreshInfo();
-        };
+      $$("[data-gd]", wrap).forEach(function (el) {
+        el.onclick = function () { var t = this.dataset.gd.split("_"); groups[+t[0]].opts.splice(+t[1], 1); if (!groups[+t[0]].opts.length) groups[+t[0]].opts.push({ bet: "", odds: null }); draw(); };
       });
-      $$("[data-os]", list).forEach(function (el) {
-        el.oninput = function () {
-          draft.options[+this.dataset.os].score = this.value.trim();
-        };
+      $$("[data-gadd]", wrap).forEach(function (el) {
+        el.onclick = function () { var gi = +this.dataset.gadd; var base = groups[gi].opts[0] || { bet: "", odds: null }; groups[gi].opts.push({ bet: "", odds: null }); draw(); };
       });
-      $$("[data-odel]", list).forEach(function (el) {
-        el.onclick = function () {
-          draft.options.splice(+this.dataset.odel, 1);
-          if (!draft.options.length) draft.options.push({ matchId: "", bet: "", odds: null });
-          drawOpts(); refreshInfo();
-        };
+      $$("[data-gdel]", wrap).forEach(function (el) {
+        el.onclick = function () { if (groups.length <= 1) { toast("至少要留一场"); return; } groups.splice(+this.dataset.gdel, 1); draw(); };
       });
-      refreshInfo();
+      info();
     }
-    function refreshInfo() {
-      var by = {}, ok = true, n = 0;
-      draft.options.forEach(function (o) {
-        if (!o.matchId) { ok = false; return; }
-        by[o.matchId] = (by[o.matchId] || 0) + 1; n++;
-      });
-      var combos = ok ? 1 : 0;
-      Object.keys(by).forEach(function (k) { combos *= by[k]; });
-      var info = $("#plInfo", box);
-      if (info) info.textContent = ok
-        ? ("场次 " + Object.keys(by).length + " · 选项 " + n + " · 注数 " + combos + " · 投注 " + fmt(2 * combos * (Number($("#plMult", box).value) || 1)) + " 元")
-        : "还有选项没选比赛";
-      return { combos: combos, ok: ok };
+    function info() {
+      var combos = 1, n = 0, ok = true;
+      groups.forEach(function (g) { if (!g.home && !g.away) ok = false; combos *= g.opts.length; n += g.opts.length; });
+      var mult = Number($("#plMult", box).value) || 1;
+      var el = $("#plInfo", box);
+      if (el) el.textContent = "场次 " + groups.length + " · 结果 " + n + " · 注数 " + combos +
+        " · 总体金额 " + fmt(2 * combos * mult) + " 元";
     }
-    box.insertAdjacentHTML("beforeend", '<div class="note" id="plInfo" style="margin-top:6px"></div>');
-    if ($("#plMult", box)) $("#plMult", box).oninput = refreshInfo;
+
+    $("#plMult", box).oninput = info;
     $("#plClose", box).onclick = function () { mask.remove(); };
-    $("#plAddOpt", box).onclick = function () {
-      draft.options.push({ matchId: "", bet: "", odds: null });
-      drawOpts();
+    $("#plAddMatch", box).onclick = function () {
+      groups.push({ matchId: "", home: "", away: "", date: draft.date || "", league: "", score: "", opts: [{ bet: "", odds: null }] });
+      draw();
     };
     $("#plSave", box).onclick = function () {
       var name = $("#plName", box).value.trim();
       var mult = Number($("#plMult", box).value) || 1;
-      var opts = draft.options.filter(function (o) { return o.matchId; });
-      var byId2 = {};
-      D().matches.forEach(function (m) { byId2[m.id] = m; });
-      opts.forEach(function (o) {
-        var m = byId2[o.matchId];
-        if (m) { o.home = m.home; o.away = m.away; o.date = m.date; o.ht = m.ht || "";
-                 if (!o.score) o.score = m.score || ""; }
+      var note = $("#plNote", box).value.trim();
+      var opts = [];
+      groups.forEach(function (g) {
+        g.opts.forEach(function (o) {
+          if (!o.bet && o.odds == null) return;
+          opts.push({ matchId: g.matchId || "", home: g.home, away: g.away, date: g.date,
+                      league: g.league, score: g.score, bet: o.bet, odds: o.odds });
+        });
       });
-      // 同一场的多个结果共用一个赛果：把该场第一行填的比分同步给其它行
-      var scoreBy = {};
-      opts.forEach(function (o) { if (o.score) scoreBy[o.matchId] = o.score; });
-      opts.forEach(function (o) { if (scoreBy[o.matchId]) o.score = scoreBy[o.matchId]; });
-      if (!opts.length) { toast("至少加一个选项"); return; }
-      if (!name) name = (opts[0] ? (D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "" : "") + " 串关";
+      if (!opts.length) { toast("至少加一个下注内容"); return; }
+      if (!name) name = (opts[0].date || "") + " 串关";
       var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
-      rec.name = name; rec.unit = 2; rec.multiple = mult; rec.options = opts;
-      rec.date = opts[0] ? ((D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "") : "";
-      rec.domain = draft.domain || (domain === "all" ? "football" : domain);
+      rec.name = name; rec.unit = 2; rec.multiple = mult; rec.note = note; rec.options = opts;
+      rec.date = opts[0].date || ""; rec.domain = draft.domain || (domain === "all" ? "football" : domain);
       if (!p) D().parlays.push(rec);
       Store.save(true); mask.remove(); renderParlayList(); renderHeader(); render();
       toast("已保存串关「" + name + "」");
     };
-    drawOpts();
+    draw();
   }
 
   // ---------- 数据访问 ----------
