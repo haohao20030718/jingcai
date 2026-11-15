@@ -1679,6 +1679,144 @@ var UI = (function () {
     return ok ? Math.round((mult - 1) * 1000) / 1000 : null;
   }
 
+  // ---------- 串关录入界面 ----------
+  function renderParlayList() {
+    var box = $("#plList");
+    if (!box) return;
+    ensureParlays();
+    var list = (D().parlays || []).filter(function (p) {
+      return domain === "all" || (p.domain || "football") === domain;
+    });
+    if (!list.length) { box.innerHTML = '<div class="note">还没有串关票</div>'; return; }
+    box.innerHTML = list.map(function (p) {
+      var r = parlayResult(p);
+      var cls2 = r.pnl == null ? "" : (r.pnl > 0 ? "win" : r.pnl < 0 ? "lose" : "");
+      return '<div class="row" style="align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">' +
+        '<div style="flex:1">' +
+        '<div><b>' + esc(p.name || "串关") + '</b> <span class="chip">' + r.state + "</span></div>" +
+        '<div class="note" style="margin:2px 0 0">' + (r.combos || 0) + " 注 × " + (p.multiple || 1) +
+        " 倍 · 投注 " + fmt(r.stake || 0) + " 元" + (r.why ? " · " + esc(r.why) : "") + "</div></div>" +
+        '<div class="num ' + cls2 + '" style="min-width:76px;text-align:right">' +
+        (r.pnl == null ? "—" : money(r.pnl)) + "</div>" +
+        '<button class="btn sm ghost" data-pledit="' + esc(p.id) + '">改</button>' +
+        '<button class="btn sm" data-pldel="' + esc(p.id) + '">删</button></div>';
+    }).join("");
+    $$("#plList [data-pledit]").forEach(function (b) {
+      b.onclick = function () { openParlaySheet(this.dataset.pledit); };
+    });
+    $$("#plList [data-pldel]").forEach(function (b) {
+      b.onclick = function () {
+        var id = this.dataset.pldel;
+        if (!confirm("删掉这张串关票？")) return;
+        D().parlays = (D().parlays || []).filter(function (p) { return p.id !== id; });
+        Store.save(true); renderParlayList(); renderHeader(); render();
+      };
+    });
+  }
+
+  function openParlaySheet(pid) {
+    ensureParlays();
+    var p = pid ? parlayById(pid) : null;
+    var draft = p ? JSON.parse(JSON.stringify(p))
+                  : { id: null, name: "", unit: 2, multiple: 1, options: [],
+                      date: Engine.ymd(new Date()), domain: (domain === "all" ? "football" : domain) };
+    if (!Array.isArray(draft.options)) draft.options = [];
+    if (!draft.options.length) draft.options.push({ matchId: "", bet: "", odds: null });
+
+    var old = document.getElementById("plSheet");
+    if (old) old.remove();
+    var mask = document.createElement("div");
+    mask.id = "plSheet";
+    mask.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-end";
+    var box = document.createElement("div");
+    box.style.cssText = "background:var(--card);width:100%;max-height:88vh;overflow:auto;border-radius:14px 14px 0 0;padding:14px";
+    box.innerHTML =
+      '<div style="display:flex;align-items:center;margin-bottom:10px">' +
+      '<b style="font-size:16px">' + (p ? "编辑串关" : "新增串关") + "</b><div style=\"flex:1\"></div>" +
+      '<button class="btn sm" id="plClose">关闭</button></div>' +
+      '<div class="fg"><div><label>名称</label><input id="plName" placeholder="如 2611151期 2串1" value="' + esc(draft.name) + '"></div>' +
+      '<div><label>倍数</label><input id="plMult" type="number" step="1" value="' + (draft.multiple || 1) + '"></div></div>' +
+      '<div class="note" style="margin:6px 0">同一个「场」里加多个选项＝或；不同场＝且。单注固定 2 元。</div>' +
+      '<div id="plOpts"></div>' +
+      '<div class="bar" style="margin-top:8px"><button class="btn" id="plAddOpt">＋ 加一个选项</button>' +
+      '<button class="btn primary" id="plSave">保存</button></div>';
+    mask.appendChild(box);
+    document.body.appendChild(mask);
+
+    function drawOpts() {
+      var list = $("#plOpts", box);
+      list.innerHTML = draft.options.map(function (o, i) {
+        var sel = '<option value="">选比赛…</option>' + D().matches.slice().sort(function (a, b) {
+          return (Number(b.seq) || 0) - (Number(a.seq) || 0);
+        }).slice(0, 400).map(function (m) {
+          var t = "#" + m.seq + " " + (m.home || "") + " vs " + (m.away || "") + (m.date ? " " + m.date : "");
+          return '<option value="' + esc(m.id) + '"' + (o.matchId === m.id ? " selected" : "") + ">" + esc(t) + "</option>";
+        }).join("");
+        return '<div class="fg" style="align-items:end;gap:6px">' +
+          '<div style="flex:2"><select data-om="' + i + '">' + sel + "</select></div>" +
+          '<div style="flex:1"><input data-ob="' + i + '" placeholder="下注内容" value="' + esc(o.bet || "") + '"></div>' +
+          '<div style="flex:1"><input data-oo="' + i + '" type="number" step="0.01" placeholder="赔率" value="' + (o.odds == null ? "" : o.odds) + '"></div>' +
+          '<button class="btn sm" data-odel="' + i + '">删</button></div>';
+      }).join("");
+      $$("[data-om]", list).forEach(function (el) {
+        el.onchange = function () { draft.options[+this.dataset.om].matchId = this.value; refreshInfo(); };
+      });
+      $$("[data-ob]", list).forEach(function (el) {
+        el.oninput = function () { draft.options[+this.dataset.ob].bet = this.value; };
+      });
+      $$("[data-oo]", list).forEach(function (el) {
+        el.oninput = function () {
+          draft.options[+this.dataset.oo].odds = this.value === "" ? null : Number(this.value);
+          refreshInfo();
+        };
+      });
+      $$("[data-odel]", list).forEach(function (el) {
+        el.onclick = function () {
+          draft.options.splice(+this.dataset.odel, 1);
+          if (!draft.options.length) draft.options.push({ matchId: "", bet: "", odds: null });
+          drawOpts(); refreshInfo();
+        };
+      });
+      refreshInfo();
+    }
+    function refreshInfo() {
+      var by = {}, ok = true, n = 0;
+      draft.options.forEach(function (o) {
+        if (!o.matchId) { ok = false; return; }
+        by[o.matchId] = (by[o.matchId] || 0) + 1; n++;
+      });
+      var combos = ok ? 1 : 0;
+      Object.keys(by).forEach(function (k) { combos *= by[k]; });
+      var info = $("#plInfo", box);
+      if (info) info.textContent = ok
+        ? ("场次 " + Object.keys(by).length + " · 选项 " + n + " · 注数 " + combos + " · 投注 " + fmt(2 * combos * (Number($("#plMult", box).value) || 1)) + " 元")
+        : "还有选项没选比赛";
+      return { combos: combos, ok: ok };
+    }
+    box.insertAdjacentHTML("beforeend", '<div class="note" id="plInfo" style="margin-top:6px"></div>');
+    if ($("#plMult", box)) $("#plMult", box).oninput = refreshInfo;
+    $("#plClose", box).onclick = function () { mask.remove(); };
+    $("#plAddOpt", box).onclick = function () {
+      draft.options.push({ matchId: "", bet: "", odds: null });
+      drawOpts();
+    };
+    $("#plSave", box).onclick = function () {
+      var name = $("#plName", box).value.trim();
+      var mult = Number($("#plMult", box).value) || 1;
+      var opts = draft.options.filter(function (o) { return o.matchId; });
+      if (!opts.length) { toast("至少加一个选项"); return; }
+      if (!name) name = (opts[0] ? (D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "" : "") + " 串关";
+      var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
+      rec.name = name; rec.unit = 2; rec.multiple = mult; rec.options = opts;
+      rec.date = opts[0] ? ((D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "") : "";
+      rec.domain = draft.domain || (domain === "all" ? "football" : domain);
+      if (!p) D().parlays.push(rec);
+      Store.save(true); mask.remove(); renderParlayList(); renderHeader(); render();
+      toast("已保存串关「" + name + "」");
+    };
+    drawOpts();
+  }
+
   // ---------- 数据访问 ----------
   function D() { return Store.data; }
   // 同一场次组内按开赛时间（HH:MM）排；没填时间的排在当天有时间的后面，最后用序号兜底
@@ -3063,6 +3201,15 @@ var UI = (function () {
       '<option value="football">足球料单</option><option value="basketball">篮球料单</option>' +
       '<option value="esports">电竞料单</option></select>' +
       '<button class="btn primary" id="tipAdd">＋ 新建料单</button></div></div>');
+
+    // ---- 串关（一张票 = 一个注单，场间「且」、场內「或」）----
+    h.push('<div class="sec">串关</div>');
+    h.push('<div class="card" style="padding:12px">' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">' +
+      '一张串关票算一个注单：每场可以选几个结果（或），几场必须全中（且）。' +
+      '单注 2 元 × 注数 × 倍数 = 投注额。</div><div id="plList"></div>' +
+      '<div class="bar" style="margin-top:8px">' +
+      '<button class="btn primary" id="plAdd">＋ 新增串关</button></div></div>');
     h.push('<div class="sec">云同步（Gitee 私有仓库）</div>');
     h.push('<div class="card" style="padding:12px">' +
       '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">手机和电脑填同一套，就能互相同步，' +
@@ -3117,6 +3264,10 @@ var UI = (function () {
 
     $("#v-data").innerHTML = h.join("");
 
+    if ($("#plAdd")) {
+      renderParlayList();
+      $("#plAdd").onclick = function () { openParlaySheet(null); };
+    }
     if ($("#tipAdd")) {
       renderTipList();
       $("#tipAdd").onclick = function () {
