@@ -1622,7 +1622,8 @@ var UI = (function () {
       if (m) {
         // 有真实比赛记录就以它为准，并把主客/日期/比分快照回票里
         o.home = m.home; o.away = m.away; o.date = m.date;
-        o.score = m.score || ""; o.ht = m.ht || "";
+        if (m.score) o.score = m.score;      // 比赛有比分就以它为准，没有则保留票内手填的
+        if (m.ht) o.ht = m.ht;
       } else if (o.home || o.away) {
         // 比赛记录已删：用票内快照造一个"虚拟比赛"
         m = { id: o.matchId || ("po_" + (o.bet || "")), home: o.home || "", away: o.away || "",
@@ -1802,6 +1803,7 @@ var UI = (function () {
           '<div style="flex:2"><select data-om="' + i + '">' + sel + "</select></div>" +
           '<div style="flex:1"><input data-ob="' + i + '" placeholder="下注内容" value="' + esc(o.bet || "") + '"></div>' +
           '<div style="flex:1"><input data-oo="' + i + '" type="number" step="0.01" placeholder="赔率" value="' + (o.odds == null ? "" : o.odds) + '"></div>' +
+          '<div style="flex:1"><input data-os="' + i + '" placeholder="赛果 2:0" value="' + esc(o.score || "") + '"></div>' +
           '<button class="btn sm" data-odel="' + i + '">删</button></div>';
       }).join("");
       $$("[data-om]", list).forEach(function (el) {
@@ -1814,6 +1816,11 @@ var UI = (function () {
         el.oninput = function () {
           draft.options[+this.dataset.oo].odds = this.value === "" ? null : Number(this.value);
           refreshInfo();
+        };
+      });
+      $$("[data-os]", list).forEach(function (el) {
+        el.oninput = function () {
+          draft.options[+this.dataset.os].score = this.value.trim();
         };
       });
       $$("[data-odel]", list).forEach(function (el) {
@@ -1854,8 +1861,13 @@ var UI = (function () {
       D().matches.forEach(function (m) { byId2[m.id] = m; });
       opts.forEach(function (o) {
         var m = byId2[o.matchId];
-        if (m) { o.home = m.home; o.away = m.away; o.date = m.date; o.score = m.score || ""; o.ht = m.ht || ""; }
+        if (m) { o.home = m.home; o.away = m.away; o.date = m.date; o.ht = m.ht || "";
+                 if (!o.score) o.score = m.score || ""; }
       });
+      // 同一场的多个结果共用一个赛果：把该场第一行填的比分同步给其它行
+      var scoreBy = {};
+      opts.forEach(function (o) { if (o.score) scoreBy[o.matchId] = o.score; });
+      opts.forEach(function (o) { if (scoreBy[o.matchId]) o.score = scoreBy[o.matchId]; });
       if (!opts.length) { toast("至少加一个选项"); return; }
       if (!name) name = (opts[0] ? (D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "" : "") + " 串关";
       var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
