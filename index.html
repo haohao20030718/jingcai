@@ -790,6 +790,7 @@ var Store = (function () {
       settings: d.settings || {},
       deleted: d.deleted || {},
       tips: d.tips || [],
+      parlays: d.parlays || [],
       matches: [],
       costs: d.costs || []
     };
@@ -1289,6 +1290,10 @@ var UI = (function () {
     (local.tips || []).forEach(function (t) { if (t && t.id) tm[t.id] = t; });
     (remote.tips || []).forEach(function (t) { if (t && t.id) tm[t.id] = t; });   // 冲突时以云端为准
     out.tips = Object.keys(tm).map(function (k) { return tm[k]; });
+    var pm = {};
+    (local.parlays || []).forEach(function (p) { if (p && p.id) pm[p.id] = p; });
+    (remote.parlays || []).forEach(function (p) { if (p && p.id) pm[p.id] = p; });
+    out.parlays = Object.keys(pm).map(function (k) { return pm[k]; });
     return { data: out, added: added, updated: updated, removed: removed, kept: kept,
              tips: out.tips.length };
   }
@@ -1598,6 +1603,57 @@ var UI = (function () {
     return out;
   }
 
+  // ---------- 串关（多场比赛合成一张票，金额与赔率只算一次） ----------
+  function ensureParlays() {
+    var d = D();
+    if (!Array.isArray(d.parlays)) d.parlays = [];
+    return d.parlays;
+  }
+  function parlayById(id) {
+    return (D().parlays || []).filter(function (p) { return p.id === id; })[0] || null;
+  }
+  function parlayItems(p) {
+    var out = [];
+    D().matches.forEach(function (m) {
+      (m.legs || []).forEach(function (l) { if (l.parlayId === p.id) out.push({ m: m, l: l }); });
+    });
+    return out;
+  }
+  // 串关结算：全中才赢；任一场输则整票输；走水按 1 倍；半赢半输按半分
+  function parlayResult(p) {
+    var items = parlayItems(p);
+    if (!items.length) return { state: "空", pnl: null, code: "", why: "还没挂任何比赛" };
+    if (p.manual != null && p.manual !== "") return { state: "手工", pnl: Number(p.manual), code: "M", why: "" };
+    var mult = 1, need = "", lose = false;
+    for (var i = 0; i < items.length; i++) {
+      var m = items[i].m, l = items[i].l;
+      var r = Engine.autoSettle(m, l);
+      var code = r && r.code;
+      var od = Number(l.odds);
+      if (!isFinite(od)) { need = "有比赛没填赔率"; break; }
+      if (code === "L") { lose = true; break; }
+      if (code === "W") mult *= (1 + od);
+      else if (code === "HW") mult *= (1 + od / 2);
+      else if (code === "P") mult *= 1;
+      else if (code === "HL") mult *= 0.5;
+      else { need = "有比赛还判不了（" + (m.home || "") + " vs " + (m.away || "") + "：" + (r && r.why ? r.why : "需赛果") + "）"; break; }
+    }
+    var stake = Number(p.stake) || 0;
+    if (lose) return { state: "输", pnl: -stake, code: "L", why: "" };
+    if (need) return { state: "待定", pnl: null, code: "", why: need };
+    return { state: "赢", pnl: Math.round((stake * (mult - 1)) * 100) / 100, code: "W",
+             why: items.length + " 串 1，合计赔率 " + (Math.round(mult * 1000) / 1000) };
+  }
+  function parlayOdds(p) {
+    var items = parlayItems(p), mult = 1, ok = true;
+    items.forEach(function (x) {
+      var od = Number(x.l.odds);
+      if (!isFinite(od)) { ok = false; return; }
+      mult *= (1 + od);
+    });
+    return ok ? Math.round((mult - 1) * 1000) / 1000 : null;
+  }
+
   // ---------- 数据访问 ----------
   function D() { return Store.data; }
   // 同一场次组内按开赛时间（HH:MM）排；没填时间的排在当天有时间的后面，最后用序号兜底
@@ -1619,7 +1675,37 @@ var UI = (function () {
   }
   function sorted() { return D().matches.filter(inDomain).sort(cmpTimeDesc); }   // 系统内：倒序，新的在前
   function sortedAsc() { return D().matches.filter(inDomain).sort(cmpTimeAsc); } // 导出/编号：正序，早的在前
-  function allRows() { return Engine.flatten(D().matches.filter(inDomain)); }
+  function allRows() {
+    ensureParlays();
+    var rows = Engine.flatten(D().matches.filter(inDomain));
+    var pl = (D().parlays || []).filter(function (p) {
+      return domain === "all" || (p.domain || "football") === domain;
+    });
+    if (!pl.length) return rows;
+    var used = {};
+    rows.forEach(function (r) {
+      if (!r.parlayId) return;
+      used[r.parlayId] = 1;
+      r.pnl = 0; r.stake = 0;            // 串关的单笔不再单独计入总额
+    });
+    pl.forEach(function (p) {
+      var items = parlayItems(p);
+      if (!items.length) return;
+      var res = parlayResult(p);
+      var m0 = items[0].m;
+      rows.push({
+        pnl: res.pnl == null ? 0 : res.pnl,
+        stake: Number(p.stake) || 0,
+        date: p.date || m0.date || "",
+        time: p.time || m0.time || "",
+        league: "串关",
+        bet: "串关：" + (p.name || "") + "（" + items.length + " 串 1）",
+        win: res.code, parlayId: p.id, isParlay: true,
+        pending: res.pnl == null
+      });
+    });
+    return rows;
+  }
   function filtered() {
     var q = filters.q.trim().toLowerCase();
     return sorted().filter(function (m) {
@@ -2007,6 +2093,18 @@ var UI = (function () {
       '<div class="r1" style="margin-top:4px">' +
       '<input type="text" data-i="' + i + '" data-f="note" value="' + esc(l.note || "") + '" ' +
       'placeholder="这笔的备注（滚球写「滚球2:1时下单」，写下注那一刻的比分）" style="grid-column:1 / -1">' +
+      '</div>' +
+      '<div class="r1" style="margin-top:4px">' +
+      '<select data-i="' + i + '" data-parlay="' + i + '" style="grid-column:1 / -1">' +
+      (function () {
+        var opts = '<option value="">不串关（单场单算）</option>';
+        (D().parlays || []).forEach(function (p) {
+          opts += '<option value="' + esc(p.id) + '"' + (l.parlayId === p.id ? " selected" : "") + ">" +
+            esc("串关：" + (p.name || "") + "（" + p.stake + " 元）") + "</option>";
+        });
+        opts += '<option value="__new__">＋ 新建串关（把这场挂到新票上）</option>';
+        return opts;
+      })() + "</select>" +
       '</div><div class="r2">' +
       '<div class="auto">规则结算 ' + autoTxt + "</div>" +
       '<div class="auto">' + (cur.src === "manual" ? '采用手工 <span class="z num">' + money(cur.pnl) + "</span>"
@@ -2109,6 +2207,32 @@ var UI = (function () {
           refreshAutoLine(i);
           refreshTotals();
         }
+      };
+    });
+    $$("#sheetB [data-parlay]").forEach(function (el) {
+      el.onchange = function () {
+        var i = +this.dataset.parlay;
+        var l = e.legs[i]; if (!l) return;
+        var v = this.value;
+        if (v === "__new__") {
+          var nm = prompt("串关名称（例如 周末3串1）", "");
+          if (!nm) { this.value = l.parlayId || ""; return; }
+          var st = prompt("这一票的总金额（只填一次，几场共用）", "");
+          var stake = Number(String(st || "").replace(/[^\d.]/g, ""));
+          if (!isFinite(stake) || stake <= 0) { toast("金额不对，没建成"); this.value = l.parlayId || ""; return; }
+          ensureParlays();
+          var p = { id: "pl" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(),
+                    stake: stake, date: e.date || "", domain: mDomain(e), note: "" };
+          D().parlays.push(p);
+          l.parlayId = p.id;
+          try { Store.save(true); } catch (err) {}
+          toast("已建串关「" + p.name + "」" + fmt(stake) + " 元，其它场次的下拉里可以选到它");
+          renderEditForm();
+          return;
+        }
+        if (v) l.parlayId = v; else delete l.parlayId;
+        try { Store.save(true); } catch (err) {}
+        refreshAllAuto();
       };
     });
     $("#eAddLeg").onclick = function () {
