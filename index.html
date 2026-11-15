@@ -918,6 +918,10 @@ var Store = (function () {
         var s = Number(m.seq) || 0;
         if (s > mx) mx = s;
       });
+      (state.data.parlays || []).forEach(function (p) {
+        var s = Number(p.seq) || 0;
+        if (s > mx) mx = s;
+      });
       return mx + 1;
     }
   };
@@ -1717,7 +1721,8 @@ var UI = (function () {
     }).join("");
     var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
     return '<div class="mc" data-plid="' + esc(p.id) + '">' +
-      '<div class="mc-h"><span class="sq num">串关</span>' +
+      '<div class="mc-h"><span class="sq num">#' + (p.seq || "") + '</span>' +
+      '<span class="chip">串关</span>' +
       '<span style="font-weight:600">' + esc(p.name || "") + "</span>" +
       '<span class="st">' + res.state + "</span></div>" +
       '<div class="mc-b" style="display:block">' + body + "</div>" +
@@ -1727,6 +1732,8 @@ var UI = (function () {
       '<span class="sum num ' + cls2 + '">' + (res.pnl == null ? "待结算" : money(res.pnl)) + "</span>" +
       '<button class="btn sm ghost" data-plopen="' + esc(p.id) + '">编辑</button></div></div>';
   }
+
+  function rec0seq(p) { return !!(p && p.seq); }
 
   // ---------- 串关录入界面 ----------
   function renderParlayList() {
@@ -1797,7 +1804,7 @@ var UI = (function () {
       '<div style="display:flex;align-items:center;margin-bottom:10px"><b style="font-size:16px">' +
       (p ? "编辑串关" : "新增串关") + '</b><div style="flex:1"></div>' +
       '<button class="btn sm" id="plClose">关闭</button></div>' +
-      '<div class="fg"><div><label>名称</label><input id="plName" placeholder="如 2611151期 2串1" value="' + esc(draft.name || "") + '"></div>' +
+      '<div class="fg"><div><label>名称（自动：日期+几串一）</label><input id="plName" readonly value="' + esc(draft.name || "（保存时自动生成）") + '"></div>' +
       '<div><label>倍数</label><input id="plMult" type="number" step="1" value="' + (draft.multiple || 1) + '"></div></div>' +
       '<div style="margin-top:8px"><label style="font-size:12px;color:var(--muted)">备注</label>' +
       '<input id="plNote" placeholder="代买人 / 期号等" value="' + esc(draft.note || "") + '"></div>' +
@@ -1893,8 +1900,14 @@ var UI = (function () {
         });
       });
       if (!opts.length) { toast("至少加一个下注内容"); return; }
-      if (!name) name = (opts[0].date || "") + " 串关";
+      // 名称：日期 + 几串一；序号：接在最大序号后面
+      var CN = { 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八" };
+      var uniq = {}, cnt = 0;
+      opts.forEach(function (o) { var k = o.matchId || (o.home + "|" + o.away); if (!uniq[k]) { uniq[k] = 1; cnt++; } });
+      var ds = (opts[0].date || "").replace(/-/g, "");
+      name = ds + (CN[cnt] || cnt) + "串一";
       var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
+      if (!rec.seq) rec.seq = Store.nextSeq();
       rec.name = name; rec.unit = 2; rec.multiple = mult; rec.note = note; rec.options = opts;
       rec.date = opts[0].date || ""; rec.domain = draft.domain || (domain === "all" ? "football" : domain);
       if (!p) D().parlays.push(rec);
