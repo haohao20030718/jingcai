@@ -1627,7 +1627,8 @@ var UI = (function () {
       } else if (o.home || o.away) {
         // 比赛记录已删：用票内快照造一个"虚拟比赛"
         m = { id: o.matchId || ("po_" + (o.bet || "")), home: o.home || "", away: o.away || "",
-              date: o.date || "", score: o.score || "", ht: o.ht || "", legs: [] };
+              date: o.date || "", time: o.time || "", league: o.league || "",
+              matchNote: o.matchNote || "", score: o.score || "", ht: o.ht || "", legs: [] };
       }
       if (m) out.push({ m: m, l: { bet: o.bet, odds: o.odds, stake: null, note: o.note || "" } });
     });
@@ -1707,11 +1708,12 @@ var UI = (function () {
       return '<div style="padding:6px 0;border-bottom:1px dashed var(--line)">' +
         '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">' +
         '<span class="sq num">#' + (m.seq || "") + '</span>' +
-        '<span class="num">' + (m.date || "").replace(/-/g, ".") + '</span>' +
+        '<span class="num">' + (m.date || "").replace(/-/g, ".") + (m.time ? " " + esc(m.time) : "") + '</span>' +
         '<b>' + esc(m.home || "") + '</b>' +
         '<span class="num' + (m.score ? "" : "") + '">' + esc(m.score || "vs") + '</span>' +
         '<b>' + esc(m.away || "") + '</b></div>' +
-        '<div class="note" style="margin:0">下注（或）：' + opts + "</div></div>";
+        '<div class="note" style="margin:0">下注（或）：' + opts + "</div>" +
+        (m.matchNote ? '<div class="note" style="margin:0">备注：' + esc(m.matchNote) + '</div>' : '') + "</div>";
     }).join("");
     var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
     return '<div class="mc" data-plid="' + esc(p.id) + '">' +
@@ -1775,8 +1777,9 @@ var UI = (function () {
       (opts || []).forEach(function (o) {
         var k = o.matchId || ("new_" + g.length);
         if (!idx[k]) { idx[k] = { matchId: o.matchId || "", home: o.home || "", away: o.away || "",
-                                 date: o.date || "", league: o.league || "", score: o.score || "", opts: [] }; g.push(idx[k]); }
-        idx[k].opts.push({ bet: o.bet || "", odds: o.odds });
+                                 date: o.date || "", time: o.time || "", league: o.league || "",
+                                 note: o.matchNote || "", score: o.score || "", opts: [] }; g.push(idx[k]); }
+        idx[k].opts.push({ bet: o.bet || "", odds: o.odds, note: o.note || "" });
       });
       if (!g.length) g.push({ matchId: "", home: "", away: "", date: draft.date || "", league: "", score: "", opts: [{ bet: "", odds: null }] });
       return g;
@@ -1812,7 +1815,8 @@ var UI = (function () {
           return '<div style="display:flex;gap:6px;margin-top:6px">' +
             '<input data-gb="' + gi + "_" + oi + '" placeholder="下注内容，如 比分 2:0" value="' + esc(o.bet) + '" style="flex:2">' +
             '<input data-go="' + gi + "_" + oi + '" type="number" step="0.01" placeholder="赔率" value="' + (o.odds == null ? "" : o.odds) + '" style="flex:1">' +
-            '<button class="btn sm" data-gd="' + gi + "_" + oi + '">删</button></div>';
+            '<button class="btn sm" data-gd="' + gi + "_" + oi + '">删</button></div>' +
+            '<div style="margin-top:4px"><input data-gn="' + gi + "_" + oi + '" placeholder="这笔备注（滚球写「滚球1:0时下单」）" value="' + esc(o.note || "") + '"></div>';
         }).join("");
         return '<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px">' +
           '<div style="display:flex;justify-content:space-between;align-items:center">' +
@@ -1823,7 +1827,10 @@ var UI = (function () {
           '<div><label>客队</label><input data-ga="' + gi + '" value="' + esc(g.away) + '"></div></div>' +
           '<div class="fg" style="margin-top:6px">' +
           '<div><label>日期</label><input type="date" data-gdate="' + gi + '" value="' + esc(g.date) + '"></div>' +
-          '<div><label>赛事</label><input data-gleague="' + gi + '" value="' + esc(g.league) + '"></div></div>' +
+          '<div><label>开赛时间</label><input type="time" data-gtime="' + gi + '" value="' + esc(g.time || "") + '"></div></div>' +
+          '<div class="fg" style="margin-top:6px">' +
+          '<div><label>赛事</label><input data-gleague="' + gi + '" value="' + esc(g.league) + '"></div>' +
+          '<div><label>本场备注</label><input data-gnote="' + gi + '" value="' + esc(g.note || "") + '" placeholder="代买人 / 滚球说明"></div></div>' +
           '<div style="margin-top:6px"><label style="font-size:12px;color:var(--muted)">赛果（主:客）</label>' +
           '<input data-gs="' + gi + '" placeholder="2:0" value="' + esc(g.score) + '"></div>' +
           '<div style="margin-top:8px;font-size:12px;color:var(--muted)">下注内容（同一场多个结果＝或）</div>' + rows +
@@ -1835,6 +1842,11 @@ var UI = (function () {
       $$("[data-gdate]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gdate].date = this.value; }; });
       $$("[data-gleague]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gleague].league = this.value; }; });
       $$("[data-gs]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gs].score = this.value.trim(); }; });
+      $$("[data-gtime]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gtime].time = this.value; }; });
+      $$("[data-gnote]", wrap).forEach(function (el) { el.oninput = function () { groups[+this.dataset.gnote].note = this.value; }; });
+      $$("[data-gn]", wrap).forEach(function (el) {
+        el.oninput = function () { var t = this.dataset.gn.split("_"); groups[+t[0]].opts[+t[1]].note = this.value; };
+      });
       $$("[data-gb]", wrap).forEach(function (el) {
         el.oninput = function () { var t = this.dataset.gb.split("_"); groups[+t[0]].opts[+t[1]].bet = this.value; };
       });
@@ -1876,7 +1888,8 @@ var UI = (function () {
         g.opts.forEach(function (o) {
           if (!o.bet && o.odds == null) return;
           opts.push({ matchId: g.matchId || "", home: g.home, away: g.away, date: g.date,
-                      league: g.league, score: g.score, bet: o.bet, odds: o.odds });
+                      time: g.time || "", league: g.league, matchNote: g.note || "",
+                      score: g.score, bet: o.bet, odds: o.odds, note: o.note || "" });
         });
       });
       if (!opts.length) { toast("至少加一个下注内容"); return; }
