@@ -1612,11 +1612,21 @@ var UI = (function () {
   function parlayById(id) {
     return (D().parlays || []).filter(function (p) { return p.id === id; })[0] || null;
   }
+  // 一张串关票 = 若干「场」，每场有若干比分/选项（或），场与场之间是「且」
   function parlayItems(p) {
     var out = [];
-    D().matches.forEach(function (m) {
-      (m.legs || []).forEach(function (l) { if (l.parlayId === p.id) out.push({ m: m, l: l }); });
+    var byId = {};
+    D().matches.forEach(function (m) { byId[m.id] = m; });
+    (p.options || []).forEach(function (o) {
+      var m = byId[o.matchId];
+      if (m) out.push({ m: m, l: { bet: o.bet, odds: o.odds, stake: null, note: o.note || "" } });
     });
+    // 兼容旧数据：还挂在 leg.parlayId 上的
+    if (!out.length) {
+      D().matches.forEach(function (m) {
+        (m.legs || []).forEach(function (l) { if (l.parlayId === p.id) out.push({ m: m, l: l }); });
+      });
+    }
     return out;
   }
   // 竞彩过关结算：奖金 = 单注 2 元 × 倍数 × 各场命中赔率连乘（欧赔，含本金）
@@ -2238,14 +2248,22 @@ var UI = (function () {
           ensureParlays();
           var p = { id: "pl" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(),
                     unit: 2, multiple: multiple, date: e.date || "", domain: mDomain(e), note: "" };
+          p.options = [];
           D().parlays.push(p);
-          l.parlayId = p.id;
+          p.options.push({ matchId: e.id, bet: l.bet || "", odds: l.odds, note: l.note || "" });
+          var li = e.legs.indexOf(l); if (li >= 0) e.legs.splice(li, 1);
           try { Store.save(true); } catch (err) {}
           toast("已建串关「" + p.name + "」" + fmt(stake) + " 元，其它场次的下拉里可以选到它");
           renderEditForm();
           return;
         }
-        if (v) l.parlayId = v; else delete l.parlayId;
+        if (v) {
+          var pp = parlayById(v);
+          if (!pp) return;
+          pp.options = pp.options || [];
+          pp.options.push({ matchId: e.id, bet: l.bet || "", odds: l.odds, note: l.note || "" });
+          var li2 = e.legs.indexOf(l); if (li2 >= 0) e.legs.splice(li2, 1);
+        } else { delete l.parlayId; }
         try { Store.save(true); } catch (err) {}
         refreshAllAuto();
       };
