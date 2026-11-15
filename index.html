@@ -1619,6 +1619,15 @@ var UI = (function () {
     D().matches.forEach(function (m) { byId[m.id] = m; });
     (p.options || []).forEach(function (o) {
       var m = byId[o.matchId];
+      if (m) {
+        // 有真实比赛记录就以它为准，并把主客/日期/比分快照回票里
+        o.home = m.home; o.away = m.away; o.date = m.date;
+        o.score = m.score || ""; o.ht = m.ht || "";
+      } else if (o.home || o.away) {
+        // 比赛记录已删：用票内快照造一个"虚拟比赛"
+        m = { id: o.matchId || ("po_" + (o.bet || "")), home: o.home || "", away: o.away || "",
+              date: o.date || "", score: o.score || "", ht: o.ht || "", legs: [] };
+      }
       if (m) out.push({ m: m, l: { bet: o.bet, odds: o.odds, stake: null, note: o.note || "" } });
     });
     // 兼容旧数据：还挂在 leg.parlayId 上的
@@ -1841,6 +1850,12 @@ var UI = (function () {
       var name = $("#plName", box).value.trim();
       var mult = Number($("#plMult", box).value) || 1;
       var opts = draft.options.filter(function (o) { return o.matchId; });
+      var byId2 = {};
+      D().matches.forEach(function (m) { byId2[m.id] = m; });
+      opts.forEach(function (o) {
+        var m = byId2[o.matchId];
+        if (m) { o.home = m.home; o.away = m.away; o.date = m.date; o.score = m.score || ""; o.ht = m.ht || ""; }
+      });
       if (!opts.length) { toast("至少加一个选项"); return; }
       if (!name) name = (opts[0] ? (D().matches.filter(function (m) { return m.id === opts[0].matchId; })[0] || {}).date || "" : "") + " 串关";
       var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
@@ -2071,10 +2086,10 @@ var UI = (function () {
         '<button class="btn primary" id="btnAdd2">＋ 新增比赛</button></div>');
     } else {
       h.push('<div class="mlist">');
-      slice.forEach(function (m) { h.push(matchCard(m)); });
       (D().parlays || []).filter(function (p) {
         return domain === "all" || (p.domain || "football") === domain;
       }).forEach(function (p) { h.push(parlayCard(p)); });
+      slice.forEach(function (m) { h.push(matchCard(m)); });
       h.push("</div>");
       if (pages > 1) {
         h.push('<div class="pager"><button class="btn sm" id="pgPrev"' + (page <= 1 ? " disabled" : "") + '>上一页</button>' +
