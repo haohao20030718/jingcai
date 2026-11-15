@@ -3809,6 +3809,15 @@ var UI = (function () {
     Store.data = data;
     ensureSeqUnique();
     renderHeader();
+    // 配了云端就在启动后自动拉一次：手机本地存储被清空/失效时也能靠云端恢复
+    setTimeout(function () {
+      try {
+        if (typeof gconf === "function" && typeof syncGitee === "function") {
+          var c = gconf();
+          if (c && c.token && c.owner && c.repo) syncGitee(true);
+        }
+      } catch (err) {}
+    }, 1500);
     $("#tabs").onclick = function (e) {
       var b = e.target.closest("button[data-t]");
       if (!b) return;
