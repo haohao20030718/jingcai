@@ -1619,30 +1619,45 @@ var UI = (function () {
     });
     return out;
   }
-  // 串关结算：全中才赢；任一场输则整票输；走水按 1 倍；半赢半输按半分
+  // 竞彩过关结算：奖金 = 单注 2 元 × 倍数 × 各场命中赔率连乘（欧赔，含本金）
+  // 同一场可挂多个选项（复式），注数 = 各场选项数连乘；投注额 = 2元 × 注数 × 倍数
   function parlayResult(p) {
     var items = parlayItems(p);
-    if (!items.length) return { state: "空", pnl: null, code: "", why: "还没挂任何比赛" };
-    if (p.manual != null && p.manual !== "") return { state: "手工", pnl: Number(p.manual), code: "M", why: "" };
-    var mult = 1, need = "", lose = false;
-    for (var i = 0; i < items.length; i++) {
-      var m = items[i].m, l = items[i].l;
-      var r = Engine.autoSettle(m, l);
-      var code = r && r.code;
-      var od = Number(l.odds);
-      if (!isFinite(od)) { need = "有比赛没填赔率"; break; }
-      if (code === "L") { lose = true; break; }
-      if (code === "W") mult *= (1 + od);
-      else if (code === "HW") mult *= (1 + od / 2);
-      else if (code === "P") mult *= 1;
-      else if (code === "HL") mult *= 0.5;
-      else { need = "有比赛还判不了（" + (m.home || "") + " vs " + (m.away || "") + "：" + (r && r.why ? r.why : "需赛果") + "）"; break; }
+    if (!items.length) return { state: "空", pnl: null, stake: 0, why: "还没挂任何比赛" };
+    var unit = Number(p.unit) || 2;
+    var mult = Number(p.multiple) || 1;
+    var byMatch = {}, order = [];
+    items.forEach(function (x) {
+      if (!byMatch[x.m.id]) { byMatch[x.m.id] = []; order.push(x.m.id); }
+      byMatch[x.m.id].push(x);
+    });
+    var combos = 1;
+    order.forEach(function (k) { combos *= byMatch[k].length; });
+    var stake = Math.round(unit * combos * mult * 100) / 100;
+    if (p.manual != null && p.manual !== "") {
+      return { state: "手工", pnl: Number(p.manual), stake: stake, combos: combos, why: "" };
     }
-    var stake = Number(p.stake) || 0;
-    if (lose) return { state: "输", pnl: -stake, code: "L", why: "" };
-    if (need) return { state: "待定", pnl: null, code: "", why: need };
-    return { state: "赢", pnl: Math.round((stake * (mult - 1)) * 100) / 100, code: "W",
-             why: items.length + " 串 1，合计赔率 " + (Math.round(mult * 1000) / 1000) };
+    var hitOdds = [], need = "", lose = false;
+    for (var i = 0; i < order.length; i++) {
+      var opts = byMatch[order[i]], hit = null, undecided = false;
+      for (var j = 0; j < opts.length; j++) {
+        var r = Engine.autoSettle(opts[j].m, opts[j].l);
+        var code = r && r.code;
+        if (code === "W") { if (!hit) hit = opts[j]; }
+        else if (!code) { undecided = true; }
+      }
+      if (hit) hitOdds.push(Number(hit.l.odds) || 0);
+      else if (undecided) { need = "有比赛还没出结果"; break; }
+      else { lose = true; break; }
+    }
+    if (need) return { state: "待定", pnl: null, stake: stake, combos: combos, why: need };
+    if (lose) return { state: "未中", pnl: -stake, stake: stake, combos: combos, why: "有场次没中" };
+    var bonus = unit * mult;
+    hitOdds.forEach(function (od) { bonus *= od; });
+    bonus = Math.round(bonus * 100) / 100;
+    return { state: "中", pnl: Math.round((bonus - stake) * 100) / 100, stake: stake,
+             combos: combos, bonus: bonus,
+             why: unit + "元 × " + mult + "倍 × " + combos + "注；奖金 " + fmt(bonus) };
   }
   function parlayOdds(p) {
     var items = parlayItems(p), mult = 1, ok = true;
@@ -1695,7 +1710,7 @@ var UI = (function () {
       var m0 = items[0].m;
       rows.push({
         pnl: res.pnl == null ? 0 : res.pnl,
-        stake: Number(p.stake) || 0,
+        stake: res.stake || 0,
         date: p.date || m0.date || "",
         time: p.time || m0.time || "",
         league: "串关",
@@ -2217,12 +2232,12 @@ var UI = (function () {
         if (v === "__new__") {
           var nm = prompt("串关名称（例如 周末3串1）", "");
           if (!nm) { this.value = l.parlayId || ""; return; }
-          var st = prompt("这一票的总金额（只填一次，几场共用）", "");
-          var stake = Number(String(st || "").replace(/[^\d.]/g, ""));
-          if (!isFinite(stake) || stake <= 0) { toast("金额不对，没建成"); this.value = l.parlayId || ""; return; }
+          var st = prompt("买了几倍？（每注 2 元，1 倍就填 1）", "1");
+          var multiple = Number(String(st || "").replace(/[^\d.]/g, ""));
+          if (!isFinite(multiple) || multiple <= 0) { toast("倍数不对，没建成"); this.value = l.parlayId || ""; return; }
           ensureParlays();
           var p = { id: "pl" + Math.random().toString(36).slice(2, 8), name: String(nm).trim(),
-                    stake: stake, date: e.date || "", domain: mDomain(e), note: "" };
+                    unit: 2, multiple: multiple, date: e.date || "", domain: mDomain(e), note: "" };
           D().parlays.push(p);
           l.parlayId = p.id;
           try { Store.save(true); } catch (err) {}
