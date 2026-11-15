@@ -2047,6 +2047,7 @@ var UI = (function () {
     var h = [];
     h.push('<div class="bar">');
     h.push('<button class="btn primary" id="btnAdd">＋ 新增比赛</button>' +
+      '<button class="btn" id="btnAddPl">＋ 新增串关</button>' +
       '<button class="btn" id="btnSync">同步赛果</button>' +
       '<button class="btn" id="btnSettle">一键结算</button>' +
       '<button class="btn" id="btnUndo">↶ 撤回</button>');
@@ -2089,6 +2090,7 @@ var UI = (function () {
     $("#btnAdd") && ($("#btnAdd").onclick = function () { openEdit(null); });
     $("#btnAdd2") && ($("#btnAdd2").onclick = function () { openEdit(null); });
     $("#btnSync") && ($("#btnSync").onclick = syncResults);
+    $("#btnAddPl") && ($("#btnAddPl").onclick = function () { openParlaySheet(null); });
     $("#btnSettle") && ($("#btnSettle").onclick = openSettleSheet);
     $("#btnUndo") && ($("#btnUndo").onclick = undoRun);
     renderUndoBtn();
