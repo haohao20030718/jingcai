@@ -1679,6 +1679,43 @@ var UI = (function () {
     return ok ? Math.round((mult - 1) * 1000) / 1000 : null;
   }
 
+  // 串关卡片：一张注单里同时显示多场比赛的赛果 / 下注内容 / 赔率 + 总体金额
+  function parlayCard(p) {
+    var items = parlayItems(p);
+    var res = parlayResult(p);
+    var byMatch = {}, order = [];
+    items.forEach(function (x) {
+      if (!byMatch[x.m.id]) { byMatch[x.m.id] = { m: x.m, opts: [] }; order.push(x.m.id); }
+      byMatch[x.m.id].opts.push(x.l);
+    });
+    var body = order.map(function (k) {
+      var g = byMatch[k], m = g.m;
+      var opts = g.opts.map(function (l) {
+        return '<span class="num" style="margin-right:8px">' + esc(l.bet || "") +
+          (l.odds != null ? " @<b>" + fmt(l.odds) + "</b>" : "") + "</span>";
+      }).join("");
+      return '<div style="padding:6px 0;border-bottom:1px dashed var(--line)">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">' +
+        '<span class="sq num">#' + (m.seq || "") + '</span>' +
+        '<span class="num">' + (m.date || "").replace(/-/g, ".") + '</span>' +
+        '<b>' + esc(m.home || "") + '</b>' +
+        '<span class="num' + (m.score ? "" : "") + '">' + esc(m.score || "vs") + '</span>' +
+        '<b>' + esc(m.away || "") + '</b></div>' +
+        '<div class="note" style="margin:0">下注（或）：' + opts + "</div></div>";
+    }).join("");
+    var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
+    return '<div class="mc" data-plid="' + esc(p.id) + '">' +
+      '<div class="mc-h"><span class="sq num">串关</span>' +
+      '<span style="font-weight:600">' + esc(p.name || "") + "</span>" +
+      '<span class="st">' + res.state + "</span></div>" +
+      '<div class="mc-b" style="display:block">' + body + "</div>" +
+      '<div class="mc-f"><span class="num">总体金额 <b>' + fmt(res.stake || 0) + "</b> 元" +
+      (res.combos ? "（" + res.combos + " 注 × " + (p.multiple || 1) + " 倍）" : "") + "</span>" +
+      '<span class="sp"></span>' +
+      '<span class="sum num ' + cls2 + '">' + (res.pnl == null ? "待结算" : money(res.pnl)) + "</span>" +
+      '<button class="btn sm ghost" data-plopen="' + esc(p.id) + '">编辑</button></div></div>';
+  }
+
   // ---------- 串关录入界面 ----------
   function renderParlayList() {
     var box = $("#plList");
@@ -2034,6 +2071,9 @@ var UI = (function () {
     } else {
       h.push('<div class="mlist">');
       slice.forEach(function (m) { h.push(matchCard(m)); });
+      (D().parlays || []).filter(function (p) {
+        return domain === "all" || (p.domain || "football") === domain;
+      }).forEach(function (p) { h.push(parlayCard(p)); });
       h.push("</div>");
       if (pages > 1) {
         h.push('<div class="pager"><button class="btn sm" id="pgPrev"' + (page <= 1 ? " disabled" : "") + '>上一页</button>' +
@@ -2042,6 +2082,9 @@ var UI = (function () {
       }
     }
     $("#v-entry").innerHTML = h.join("");
+    $$("#v-entry [data-plopen]").forEach(function (b) {
+      b.onclick = function (ev) { ev.stopPropagation(); openParlaySheet(this.dataset.plopen); };
+    });
 
     $("#btnAdd") && ($("#btnAdd").onclick = function () { openEdit(null); });
     $("#btnAdd2") && ($("#btnAdd2").onclick = function () { openEdit(null); });
