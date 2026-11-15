@@ -1295,8 +1295,12 @@ var UI = (function () {
     (remote.tips || []).forEach(function (t) { if (t && t.id) tm[t.id] = t; });   // 冲突时以云端为准
     out.tips = Object.keys(tm).map(function (k) { return tm[k]; });
     var pm = {};
-    (local.parlays || []).forEach(function (p) { if (p && p.id) pm[p.id] = p; });
     (remote.parlays || []).forEach(function (p) { if (p && p.id) pm[p.id] = p; });
+    (local.parlays || []).forEach(function (p) {
+      if (!p || !p.id) return;
+      var o = pm[p.id];
+      if (!o || (p.upd || 0) >= (o.upd || 0)) pm[p.id] = p;   // 本地不比云端旧就用本地
+    });
     out.parlays = Object.keys(pm).map(function (k) { return pm[k]; });
     return { data: out, added: added, updated: updated, removed: removed, kept: kept,
              tips: out.tips.length };
@@ -1940,6 +1944,7 @@ var UI = (function () {
       name = ds + (CN[cnt] || cnt) + "串一";
       var rec = p || { id: "pl" + Math.random().toString(36).slice(2, 8) };
       if (!rec.seq) rec.seq = Store.nextSeq();
+      rec.upd = Date.now();
       rec.name = name; rec.unit = 2; rec.multiple = mult; rec.note = note; rec.options = opts;
       rec.date = opts[0].date || ""; rec.domain = draft.domain || (domain === "all" ? "football" : domain);
       if (!p) D().parlays.push(rec);
