@@ -1641,6 +1641,8 @@ var UI = (function () {
               ot: !!o.ot, domain: o.domain || "football", legs: [] };
       }
       if (m) {
+        // 同一场多个结果共用一个分组键，不同场即使比分写法相同也不能并成一场
+        m = Object.assign({}, m, { id: o.gid || (o.home || "") + "|" + (o.away || "") || m.id });
         // 「比分 2:0」引擎只认「波胆」，这里统一转换，否则整票永远判不了
         var bt = String(o.bet || "").trim();
         if (/^比分/.test(bt)) bt = bt.replace(/^比分/, "波胆");
@@ -1714,44 +1716,44 @@ var UI = (function () {
       if (!byMatch[x.m.id]) { byMatch[x.m.id] = { m: x.m, opts: [] }; order.push(x.m.id); }
       byMatch[x.m.id].opts.push(x.l);
     });
-    var body = order.map(function (k) {
+    var body = order.map(function (k, idx) {
       var g = byMatch[k], m = g.m;
-      var opts = g.opts.map(function (l) {
-        return '<span class="num" style="margin-right:8px">' + esc(l.bet || "") +
-          (l.odds != null ? " @<b>" + fmt(l.odds) + "</b>" : "") + "</span>";
+      var bets = g.opts.map(function (l) {
+        return '<span class="num" style="margin-right:10px">' + esc(l.bet || "") +
+          (l.odds != null ? '@' + fmt(l.odds) : "") + "</span>";
       }).join("");
-      return '<div style="padding:6px 0;border-bottom:1px dashed var(--line)">' +
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">' +
-        '<span class="sq num">#' + (m.seq || "") + '</span>' +
-        '<span class="num">' + (m.date || "").replace(/-/g, ".") + (m.time ? " " + esc(m.time) : "") + '</span>' +
-        '<b>' + esc(m.home || "") + '</b>' +
-        '<span class="num' + (m.score ? "" : "") + '">' + esc(m.score || "vs") + '</span>' +
-        '<b>' + esc(m.away || "") + '</b></div>' +
-        '<div class="note" style="margin:0">下注（或）：' + opts + "</div>" +
-        (m.matchNote ? '<div class="note" style="margin:0">备注：' + esc(m.matchNote) + '</div>' : '') + "</div>";
+      return '<div' + (idx ? ' style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px"' : "") + ">" +
+        '<div class="mc-b" style="padding:2px 0">' +
+        '<div class="tm">' + esc(m.home || "") + "</div>" +
+        '<div class="sc num' + (m.score ? "" : " no") + '">' + esc(m.score || "vs") + "</div>" +
+        '<div class="tm r">' + esc(m.away || "") + "</div></div>" +
+        '<div class="note num" style="margin:2px 0 0">' +
+        (m.date ? (m.date || "").replace(/-/g, ".") + (m.time ? " " + m.time : "") + "　" : "") +
+        "下注（或）：" + bets + "</div>" +
+        (m.matchNote ? '<div class="note" style="margin:0">备注：' + esc(m.matchNote) + "</div>" : "") +
+        "</div>";
     }).join("");
     var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
-    // 代买人：票级备注优先，其次第一场的本场备注
-    var buyer = (p.note || "").split(/[\/／\s]/)[0] || (order.length && items[0].m.matchNote) || "";
-    // 状态：全部有赛果=已结算；部分=待确认；都没有=待结算
+    var buyer = String(p.note || "").split(/[\/／\s]/)[0] || (order.length ? (items[0].m.matchNote || "") : "");
     var hasScore = 0, total = order.length;
     order.forEach(function (k) { if (byMatch[k].m.score) hasScore++; });
     var stTxt = total && hasScore === total ? "已结算" : (hasScore ? "待确认" : "待结算");
+    var first = order.length ? byMatch[order[0]].m : {};
     return '<div class="mc" data-plid="' + esc(p.id) + '">' +
-      '<div class="mc-h"><span class="sq num">#' + (p.seq || "") + '</span>' +
-      '<span class="chip">串关</span>' +
+      '<div class="mc-h"><span class="sq num">#' + (p.seq || "") + "</span>" +
+      '<span class="num">' + (first.date || "").replace(/-/g, ".") + " " + dow(first.date) + "</span>" +
+      (first.time ? '<span class="num">' + esc(first.time) + "</span>" : "") +
+      '<span class="lg">串关</span>' +
       '<span style="font-weight:600">' + esc(p.name || "") + "</span>" +
       (buyer ? '<span class="lg">' + esc(buyer) + "</span>" : "") +
       '<span class="st">' + stTxt + "</span></div>" +
-      '<div class="mc-b" style="display:block">' + body + "</div>" +
+      '<div class="mc-l">' + body + "</div>" +
       '<div class="mc-f"><span class="num">总体金额 <b>' + fmt(res.stake || 0) + "</b> 元" +
       (res.combos ? "（" + res.combos + " 注 × " + (p.multiple || 1) + " 倍）" : "") + "</span>" +
       '<span class="sp"></span>' +
       '<span class="sum num ' + cls2 + '">' + (res.pnl == null ? "待结算" : money(res.pnl)) + "</span>" +
       '<button class="btn sm ghost" data-plopen="' + esc(p.id) + '">编辑</button></div></div>';
   }
-
-  function rec0seq(p) { return !!(p && p.seq); }
 
   // ---------- 串关录入界面 ----------
   function renderParlayList() {
@@ -1800,8 +1802,8 @@ var UI = (function () {
     function toGroups(opts) {
       var g = [], idx = {};
       (opts || []).forEach(function (o) {
-        var k = o.matchId || ("new_" + g.length);
-        if (!idx[k]) { idx[k] = { matchId: o.matchId || "", home: o.home || "", away: o.away || "",
+        var k = o.gid || o.matchId || (o.home || "") + "|" + (o.away || "") || ("new_" + g.length);
+        if (!idx[k]) { idx[k] = { gid: o.gid || k, matchId: o.matchId || "", home: o.home || "", away: o.away || "",
                                  date: o.date || "", time: o.time || "", league: o.league || "",
                                  note: o.matchNote || "", score: o.score || "", opts: [],
                                  domain: o.domain || "football", ht: o.ht || "",
@@ -1939,7 +1941,8 @@ var UI = (function () {
       groups.forEach(function (g) {
         g.opts.forEach(function (o) {
           if (!o.bet && o.odds == null) return;
-          opts.push({ matchId: g.matchId || "", home: g.home, away: g.away, date: g.date,
+          if (!g.gid) g.gid = "g" + Math.random().toString(36).slice(2, 8);
+          opts.push({ gid: g.gid, matchId: g.matchId || "", home: g.home, away: g.away, date: g.date,
                       time: g.time || "", league: g.league, matchNote: g.note || "",
                       domain: g.domain || "football", ht: g.ht || "",
                       corners: g.corners == null ? null : g.corners,
