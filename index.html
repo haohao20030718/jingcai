@@ -479,6 +479,9 @@ var Engine = (function () {
       return { kind: "btts", no: t.indexOf("不是") >= 0 };
     }
     if (t.indexOf("全场和局") >= 0) return { kind: "draw" };
+    // 半全场：两个字的胜平负组合（胜胜/胜平/平胜/平平/负平…），第一个字=半场主队，第二个字=全场主队
+    var htftM = /^(?:半全场)?([胜平负])([胜平负])$/.exec(t);
+    if (htftM) return { kind: "htft2", h1: htftM[1], h2: htftM[2] };
     if (/和局\//.test(t) || /\/和局/.test(t)) return { kind: "htft" };   // 半全场需中场比分
     if (t.indexOf("开场15分钟") >= 0) return { kind: "na" };
     // 角球 / 黄牌：靠额外记录的角球数、黄牌数结算
@@ -549,6 +552,15 @@ var Engine = (function () {
     var p = parseBet(leg.bet, match.home, match.away);
     if (!p || p.kind === "na") return { code: null, why: "玩法需人工" };
     if (p.kind === "htft") return { code: null, why: "半全场需人工" };
+    // 半全场（胜胜/胜平/平负…）：第一字＝半场主队胜平负，第二字＝全场主队胜平负
+    if (p.kind === "htft2") {
+      var ht2 = parseScore(match.ht);
+      if (!ht2) return { code: null, why: "需半场比分" };
+      var sgn = function (x, y) { return x > y ? "胜" : (x === y ? "平" : "负"); };
+      var f1 = sgn(ht2[0], ht2[1]), f2 = sgn(sc[0], sc[1]);
+      if (f1 === p.h1 && f2 === p.h2) return { code: "W", why: "半场" + f1 + " 全场" + f2 };
+      return { code: "L", why: "半场" + f1 + " 全场" + f2 };
+    }
     var hg = sc[0], ag = sc[1], code = null;
     // 半场盘改用中场比分
     if (p.half) {
