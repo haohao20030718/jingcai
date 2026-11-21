@@ -1731,11 +1731,18 @@ var UI = (function () {
         (m.matchNote ? '<div class="note" style="margin:0">备注：' + esc(m.matchNote) + '</div>' : '') + "</div>";
     }).join("");
     var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
+    // 代买人：票级备注优先，其次第一场的本场备注
+    var buyer = (p.note || "").split(/[\/／\s]/)[0] || (order.length && items[0].m.matchNote) || "";
+    // 状态：全部有赛果=已结算；部分=待确认；都没有=待结算
+    var hasScore = 0, total = order.length;
+    order.forEach(function (k) { if (byMatch[k].m.score) hasScore++; });
+    var stTxt = total && hasScore === total ? "已结算" : (hasScore ? "待确认" : "待结算");
     return '<div class="mc" data-plid="' + esc(p.id) + '">' +
       '<div class="mc-h"><span class="sq num">#' + (p.seq || "") + '</span>' +
       '<span class="chip">串关</span>' +
       '<span style="font-weight:600">' + esc(p.name || "") + "</span>" +
-      '<span class="st">' + res.state + "</span></div>" +
+      (buyer ? '<span class="lg">' + esc(buyer) + "</span>" : "") +
+      '<span class="st">' + stTxt + "</span></div>" +
       '<div class="mc-b" style="display:block">' + body + "</div>" +
       '<div class="mc-f"><span class="num">总体金额 <b>' + fmt(res.stake || 0) + "</b> 元" +
       (res.combos ? "（" + res.combos + " 注 × " + (p.multiple || 1) + " 倍）" : "") + "</span>" +
@@ -2138,11 +2145,30 @@ var UI = (function () {
   // ---------- 录入 ----------
   function viewEntry() {
     var list = filtered();
+    // 串关和比赛放在同一个列表里，按 日期→时间→序号 混排后一起分页
+    var pls = (D().parlays || []).filter(function (p) {
+      return domain === "all" || (p.domain || "football") === domain;
+    });
+    function mixKey(x) {
+      var m = x.k === "m" ? x.m : x.p;
+      var opts = (x.p && x.p.options) || [];
+      var d = m.date || (opts[0] && opts[0].date) || "";
+      var t = m.time || (opts[0] && opts[0].time) || "";
+      return [d, t, Number(m.seq) || 0];
+    }
+    var items = list.map(function (m) { return { k: "m", m: m }; })
+      .concat(pls.map(function (pl) { return { k: "p", p: pl }; }));
+    items.sort(function (x, y) {
+      var A = mixKey(x), B = mixKey(y);
+      if (A[0] !== B[0]) return A[0] < B[0] ? 1 : -1;
+      if (A[1] !== B[1]) return A[1] < B[1] ? 1 : -1;
+      return B[2] - A[2];
+    });
     var rows = allRows();
     var a = Engine.agg(rows);
-    var pages = Math.max(1, Math.ceil(list.length / PER));
+    var pages = Math.max(1, Math.ceil(items.length / PER));
     if (page > pages) page = pages;
-    var slice = list.slice((page - 1) * PER, page * PER);
+    var slice = items.slice((page - 1) * PER, page * PER);
 
     var lgSet = {};
     D().matches.forEach(function (m) { if (m.league) lgSet[m.league] = (lgSet[m.league] || 0) + 1; });
@@ -2176,10 +2202,9 @@ var UI = (function () {
         '<button class="btn primary" id="btnAdd2">＋ 新增比赛</button></div>');
     } else {
       h.push('<div class="mlist">');
-      (D().parlays || []).filter(function (p) {
-        return domain === "all" || (p.domain || "football") === domain;
-      }).forEach(function (p) { h.push(parlayCard(p)); });
-      slice.forEach(function (m) { h.push(matchCard(m)); });
+      slice.forEach(function (it) {
+        h.push(it.k === "p" ? parlayCard(it.p) : matchCard(it.m));
+      });
       h.push("</div>");
       if (pages > 1) {
         h.push('<div class="pager"><button class="btn sm" id="pgPrev"' + (page <= 1 ? " disabled" : "") + '>上一页</button>' +
