@@ -1719,18 +1719,19 @@ var UI = (function () {
     var body = order.map(function (k, idx) {
       var g = byMatch[k], m = g.m;
       var bets = g.opts.map(function (l) {
-        return '<span class="num" style="margin-right:10px">' + esc(l.bet || "") +
+        return '<span class="num" style="margin-right:12px">' + esc(l.bet || "") +
           (l.odds != null ? '@' + fmt(l.odds) : "") + "</span>";
       }).join("");
-      return '<div' + (idx ? ' style="border-top:1px dashed var(--line);margin-top:6px;padding-top:6px"' : "") + ">" +
-        '<div class="mc-b" style="padding:2px 0">' +
+      // 和单个注单完全同一套结构：.mc-b 三栏 + .mc-l 明细，二者是兄弟节点
+      return '<div class="mc-b">' +
         '<div class="tm">' + esc(m.home || "") + "</div>" +
         '<div class="sc num' + (m.score ? "" : " no") + '">' + esc(m.score || "vs") + "</div>" +
         '<div class="tm r">' + esc(m.away || "") + "</div></div>" +
-        '<div class="note num" style="margin:2px 0 0">' +
+        '<div class="mc-l" style="' + (idx ? "border-top:1px dashed var(--line)" : "") + '">' +
+        '<div class="note num" style="margin:0">' +
         (m.date ? (m.date || "").replace(/-/g, ".") + (m.time ? " " + m.time : "") + "　" : "") +
         "下注（或）：" + bets + "</div>" +
-        (m.matchNote ? '<div class="note" style="margin:0">备注：' + esc(m.matchNote) + "</div>" : "") +
+        (m.matchNote ? '<div class="note" style="margin:2px 0 0">备注：' + esc(m.matchNote) + "</div>" : "") +
         "</div>";
     }).join("");
     var cls2 = res.pnl == null ? "" : (res.pnl > 0 ? "win" : res.pnl < 0 ? "lose" : "");
@@ -1747,7 +1748,7 @@ var UI = (function () {
       '<span style="font-weight:600">' + esc(p.name || "") + "</span>" +
       (buyer ? '<span class="lg">' + esc(buyer) + "</span>" : "") +
       '<span class="st">' + stTxt + "</span></div>" +
-      '<div class="mc-l">' + body + "</div>" +
+      body +
       '<div class="mc-f"><span class="num">总体金额 <b>' + fmt(res.stake || 0) + "</b> 元" +
       (res.combos ? "（" + res.combos + " 注 × " + (p.multiple || 1) + " 倍）" : "") + "</span>" +
       '<span class="sp"></span>' +
